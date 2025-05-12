@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: 'pgvector/pgvector:pg17'
+    environment:
+      - 'POSTGRES_DB=code_review'
+      - 'POSTGRES_PASSWORD=password'
+      - 'POSTGRES_USER=postgres'
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "shared_buffers=1GB"
+
+volumes:
+  postgres-data:

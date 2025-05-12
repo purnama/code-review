@@ -1,0 +1,40 @@
+# Maven build files
+target/
+!target/*.jar
+
+# Local configuration
+.env
+*.log
+*.gz
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.settings/
+.classpath
+.factorypath
+.project
+.apt_generated/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Version control
+.git/
+.github/
+.gitignore
+
+# Unneeded sources
+src/test/
+src/main/resources/application-dev.properties
+src/main/resources/application-local.properties
+
+# Documentation
+HELP.md
+README.md
+LICENSE
+CONTRIBUTING.md

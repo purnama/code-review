@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout}">
+<head>
+    <title>404 - Page Not Found</title>
+</head>
+<body>
+    <div layout:fragment="content">
+        <div class="container mt-5">
+            <div class="row">
+                <div class="col-md-12 text-center">
+                    <div class="error-template">
+                        <h1 class="display-1">404</h1>
+                        <h2 class="text-danger mb-4">Page Not Found</h2>
+                        <div class="error-details mb-4">
+                            <p th:text="${message}">Sorry, the page you requested cannot be found.</p>
+                            <p class="text-muted small" th:text="'Path: ' + ${path}"></p>
+                        </div>
+                        <div class="error-actions">
+                            <a href="/" class="btn btn-primary btn-lg">
+                                <i class="bi bi-house me-2"></i>Back to Home
+                            </a>
+                            <a href="/review" class="btn btn-outline-primary btn-lg ms-2">
+                                <i class="bi bi-code-square me-2"></i>Try Code Review
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

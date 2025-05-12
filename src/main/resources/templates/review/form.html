@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout}">
+<head>
+    <title>Code Review - Code Review AI</title>
+</head>
+<body>
+    <div layout:fragment="content">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <h1 class="display-5 mb-4">
+                    <i class="bi bi-code-square text-primary me-2"></i>Code Review
+                </h1>
+                
+                <div class="card mb-4 bg-light">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-info-circle text-primary me-2"></i>How it works</h5>
+                        <p class="card-text">
+                            Simply submit your GitHub URL and our AI will automatically analyze your code,
+                            detect the programming language, and provide personalized feedback based on best practices
+                            and coding standards to help improve quality and maintainability.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">Submit Code for Review</h5>
+            </div>
+            <div class="card-body">
+                <form th:action="@{/review}" method="post" th:object="${reviewRequest}" class="mt-2">
+                    <div class="mb-4">
+                        <label for="githubUrl" class="form-label">
+                            <i class="bi bi-github me-1"></i> GitHub URL
+                        </label>
+                        <input type="url" class="form-control" id="githubUrl" th:field="*{githubUrl}" 
+                               placeholder="https://github.com/username/repo/blob/main/path/to/file.java" required>
+                        <div class="form-text text-secondary">Enter the URL to the specific file or repository on GitHub you want to review.</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="reset" class="btn btn-outline-secondary me-md-2">
+                            <i class="bi bi-x-circle me-1"></i> Reset
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-lightning-charge me-1"></i> Review Code
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

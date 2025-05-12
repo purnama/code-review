@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout}">
+<head>
+    <title>Confluence URLs - Code Review AI</title>
+</head>
+<body>
+    <div layout:fragment="content">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <h1 class="display-5 mb-0">
+                        <i class="bi bi-link-45deg text-primary me-2"></i>Confluence URLs
+                    </h1>
+                    <a href="/confluence-urls/new" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-1"></i> Add URL
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-link text-primary me-2"></i>Managed URLs
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-3">Title</th>
+                                <th>URL</th>
+                                <th>Updated</th>
+                                <th>Status</th>
+                                <th class="text-end pe-3">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:if="${urls.empty}">
+                                <td colspan="5" class="text-center py-4">
+                                    <div class="d-flex flex-column align-items-center">
+                                        <i class="bi bi-search fs-1 text-muted mb-3"></i>
+                                        <p>No Confluence URLs found</p>
+                                        <a href="/confluence-urls/new" class="btn btn-sm btn-primary mt-2">
+                                            <i class="bi bi-plus-circle me-1"></i> Add your first URL
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr th:each="url : ${urls}">
+                                <td class="ps-3">
+                                    <span class="fw-medium" th:text="${url.title}">Java Coding Guidelines</span>
+                                    <div class="small text-muted text-truncate" style="max-width: 300px;" th:if="${url.description}" th:text="${url.description}"></div>
+                                </td>
+                                <td>
+                                    <a th:href="${url.url}" target="_blank" class="text-truncate d-inline-block" style="max-width: 250px;">
+                                        <i class="bi bi-box-arrow-up-right me-1"></i>
+                                        <span th:text="${url.url}">https://confluence.example.com/display/DEV/Java+Coding+Guidelines</span>
+                                    </a>
+                                </td>
+                                <td>
+                                    <span th:if="${url.updatedAt != null}">
+                                        <i class="bi bi-clock-history text-muted me-1"></i>
+                                        <span th:text="${#temporals.format(url.updatedAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span th:if="${url.active}" class="badge bg-success">
+                                        <i class="bi bi-check-circle me-1"></i> Active
+                                    </span>
+                                    <span th:unless="${url.active}" class="badge bg-secondary">
+                                        <i class="bi bi-pause-circle me-1"></i> Inactive
+                                    </span>
+                                </td>
+                                <td class="text-end pe-3">
+                                    <div class="btn-group btn-group-sm">
+                                        <a th:href="@{/content-blocks/{id}(id=${url.id})}" class="btn btn-outline-primary" data-bs-toggle="tooltip" title="View Content Blocks">
+                                            <i class="bi bi-list-ul"></i>
+                                        </a>
+                                        <a th:href="@{/confluence-urls/edit/{id}(id=${url.id})}" class="btn btn-outline-secondary" data-bs-toggle="tooltip" title="Edit URL">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <a th:href="@{/confluence-urls/toggle/{id}(id=${url.id})}" 
+                                           th:class="${url.active ? 'btn btn-outline-warning' : 'btn btn-outline-success'}"
+                                           data-bs-toggle="tooltip" th:title="${url.active ? 'Deactivate' : 'Activate'}">
+                                            <i th:class="${url.active ? 'bi bi-pause-fill' : 'bi bi-play-fill'}"></i>
+                                        </a>
+                                        <a th:href="@{/confluence-urls/delete/{id}(id=${url.id})}" 
+                                           class="btn btn-outline-danger"
+                                           data-bs-toggle="tooltip" title="Delete URL"
+                                           onclick="return confirm('Are you sure you want to delete this URL? All associated content blocks will also be deleted.');">
+                                            <i class="bi bi-trash"></i>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card shadow-sm mb-4">
+            <div class="card-body bg-light">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <i class="bi bi-info-circle-fill text-primary fs-2"></i>
+                    </div>
+                    <div class="col">
+                        <h5 class="mb-1">Managing Confluence URLs</h5>
+                        <p class="mb-0">
+                            Confluence URLs point to pages that contain code review guidelines or standards.
+                            From each URL, you can extract specific content blocks containing individual guidelines or rules.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
