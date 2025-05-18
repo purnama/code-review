@@ -10,22 +10,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: ankane/pgvector:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: code_review_test
-        ports:
-          - 5432:5432
-        # Set health checks to wait until postgres has started
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
     - uses: actions/checkout@v3
     
@@ -35,9 +19,20 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
+    
+    - name: Set up Docker Compose
+      uses: docker/setup-buildx-action@v1
+      
+    - name: Start PostgreSQL with pgvector using Docker Compose
+      run: |
+        docker-compose -f compose.yaml up -d postgres
+        # Wait for PostgreSQL to be ready
+        docker-compose -f compose.yaml exec -T postgres pg_isready -U postgres -d code_review --timeout=30
         
     - name: Build with Maven
       run: ./mvnw -B package --file pom.xml
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       
     - name: Run Tests
       run: ./mvnw test
@@ -46,6 +41,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: ./mvnw -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=yourusername_code-review
       if: env.SONAR_TOKEN != ''
       
@@ -55,3 +51,8 @@ jobs:
         ./mvnw spring-boot:build-image -Dspring-boot.build-image.imageName=yourusername/code-review:latest
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        
+    - name: Stop Docker containers
+      if: always()
+      run: docker-compose -f compose.yaml down
