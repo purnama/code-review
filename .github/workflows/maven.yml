@@ -40,13 +40,10 @@ jobs:
           sleep 5
         done
         
-    - name: Build with Maven
+    - name: Build with Maven and Run Tests
       run: ./mvnw -B package --file pom.xml
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      
-    - name: Run Tests
-      run: ./mvnw test
       
     - name: Analyze with SonarCloud
       env:
