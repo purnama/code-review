@@ -21,13 +21,13 @@ jobs:
         cache: maven
     
     - name: Set up Docker Compose
-      uses: docker/setup-buildx-action@v1
+      uses: docker/setup-buildx-action@v2
       
     - name: Start PostgreSQL with pgvector using Docker Compose
       run: |
-        docker-compose -f compose.yaml up -d postgres
+        docker compose -f compose.yaml up -d postgres
         # Wait for PostgreSQL to be ready
-        docker-compose -f compose.yaml exec -T postgres pg_isready -U postgres -d code_review --timeout=30
+        docker compose -f compose.yaml exec -T postgres pg_isready -U postgres -d code_review --timeout=30
         
     - name: Build with Maven
       run: ./mvnw -B package --file pom.xml
@@ -55,4 +55,4 @@ jobs:
         
     - name: Stop Docker containers
       if: always()
-      run: docker-compose -f compose.yaml down
+      run: docker compose -f compose.yaml down
