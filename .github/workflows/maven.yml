@@ -26,8 +26,19 @@ jobs:
     - name: Start PostgreSQL with pgvector using Docker Compose
       run: |
         docker compose -f compose.yaml up -d postgres
-        # Wait for PostgreSQL to be ready
-        docker compose -f compose.yaml exec -T postgres pg_isready -U postgres -d code_review --timeout=30
+        # Wait for PostgreSQL to be ready (give it more time to initialize)
+        echo "Waiting for PostgreSQL to be ready..."
+        sleep 10  # Add a delay of 10 seconds
+        # Try multiple times to check if PostgreSQL is ready
+        for i in {1..10}; do
+          echo "Attempt $i: Checking if PostgreSQL is ready..."
+          if docker compose -f compose.yaml exec -T postgres pg_isready -U postgres; then
+            echo "PostgreSQL is ready!"
+            break
+          fi
+          echo "PostgreSQL is not ready yet. Waiting..."
+          sleep 5
+        done
         
     - name: Build with Maven
       run: ./mvnw -B package --file pom.xml
