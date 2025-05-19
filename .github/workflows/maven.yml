@@ -21,7 +21,7 @@ jobs:
         cache: maven
     
     - name: Set up Docker Compose
-      uses: docker/setup-buildx-action@v2
+      uses: docker/setup-buildx-action@v3
       
     - name: Start PostgreSQL with pgvector using Docker Compose
       run: |
