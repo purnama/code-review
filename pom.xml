@@ -149,7 +149,7 @@
 		<dependency>
 			<groupId>org.commonmark</groupId>
 			<artifactId>commonmark-ext-autolink</artifactId>
-			<version>0.21.0</version>
+			<version>0.24.0</version>
 		</dependency>
 		
 		<!-- HttpClient 5 is required by Spring AI for OpenAI API communication -->
