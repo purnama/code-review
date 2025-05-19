@@ -129,11 +129,6 @@
 			<artifactId>hibernate-vector</artifactId>
 			<version>6.4.0.Final</version>
 		</dependency>
-		<dependency>
-			<groupId>org.apache.httpcomponents.client5</groupId>
-			<artifactId>httpclient5</artifactId>
-			<version>5.4.3</version>
-		</dependency>
 		
 		<!-- CommonMark for Markdown to HTML conversion -->
 		<dependency>
@@ -155,6 +150,13 @@
 			<groupId>org.commonmark</groupId>
 			<artifactId>commonmark-ext-autolink</artifactId>
 			<version>0.21.0</version>
+		</dependency>
+		
+		<!-- HttpClient 5 is required by Spring AI for OpenAI API communication -->
+		<dependency>
+			<groupId>org.apache.httpcomponents.client5</groupId>
+			<artifactId>httpclient5</artifactId>
+			<!-- Let Spring Boot manage the version -->
 		</dependency>
 	</dependencies>
 	<dependencyManagement>
