@@ -62,13 +62,8 @@ jobs:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       continue-on-error: true
       
-    - name: Analyze with SonarCloud
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: ./mvnw -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar -Dsonar.projectKey=purnama_code-review -Dsonar.organization=purnama
-      if: env.SONAR_TOKEN != ''
+    # Using SonarCloud GitHub App for automatic analysis instead of manual analysis
+    # See: https://docs.sonarcloud.io/getting-started/github/
       
     - name: Build and publish Docker image
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
