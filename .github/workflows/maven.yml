@@ -48,13 +48,19 @@ jobs:
         cat src/main/resources/db/migration/V5__add_active_column_to_confluence_urls.sql
         cat src/main/resources/db/migration/V6__add_embedding_column_to_content_blocks.sql
         
-        echo "Checking compiled resources:"
-        find target/classes/db/migration -type f | sort 2>/dev/null || echo "Directory not found"
-        
     - name: Build with Maven and Run Tests
       run: ./mvnw -B package --file pom.xml
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Set up Snyk
+      uses: snyk/actions/setup@master
+      
+    - name: Run Snyk to check for vulnerabilities
+      run: snyk test --all-projects
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
       
     - name: Analyze with SonarCloud
       env:
@@ -71,6 +77,19 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        
+    - name: Run Snyk to check Docker image for vulnerabilities
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: snyk container test yourusername/code-review:latest
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
+      
+    - name: Monitor project in Snyk
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: snyk monitor --all-projects
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         
     - name: Stop Docker containers
       if: always()
