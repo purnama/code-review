@@ -3,8 +3,6 @@ package de.purnama.code_review.service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -109,11 +107,11 @@ public class ConfluenceService {
                 throw new ConfluenceException("No HTML content available in the ConfluenceUrl object");
             }
 
-            // Simple HTML to text conversion (could be improved with a proper HTML parser)
-            String plainText = confluenceUrl.getHtmlContent().replaceAll("<[^>]*>", " ")
-                    .replaceAll("&nbsp;", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
+            // Simple HTML to text conversion using String manipulation instead of regex
+            // First, remove HTML tags
+            String text = removeHtmlTags(confluenceUrl.getHtmlContent());
+            // Then replace HTML entities and normalize whitespace
+            String plainText = normalizeWhitespace(text);
 
             List<ContentBlock> contentBlocks = new ArrayList<>();
 
@@ -177,26 +175,70 @@ public class ConfluenceService {
     }
 
     /**
-     * Extract the page ID from a Confluence URL
+     * Extract the page ID from a Confluence URL using String operations
+     * instead of regular expressions for better readability and performance.
      */
     private String extractPageIdFromUrl(String url) {
-        // Try to match standard Confluence Cloud URL pattern
-        Pattern pattern = Pattern.compile(".*\\/pages\\/(\\d+).*");
-        Matcher matcher = pattern.matcher(url);
-
-        if (matcher.matches()) {
-            return matcher.group(1);
+        if (url == null) {
+            return null;
         }
-
-        // Try alternative pattern
-        pattern = Pattern.compile(".*pageId=(\\d+).*");
-        matcher = pattern.matcher(url);
-
-        if (matcher.matches()) {
-            return matcher.group(1);
+        
+        // Handle standard Confluence Cloud URL pattern: /pages/123456/
+        int pagesIndex = url.indexOf("/pages/");
+        if (pagesIndex >= 0) {
+            // Start after "/pages/"
+            int startIndex = pagesIndex + 7;
+            int endIndex = url.indexOf("/", startIndex);
+            
+            // If no trailing slash, use the end of the string
+            if (endIndex < 0) {
+                endIndex = url.length();
+            }
+            
+            // Extract the substring and verify it's numeric
+            String pageId = url.substring(startIndex, endIndex);
+            if (isNumeric(pageId)) {
+                return pageId;
+            }
         }
-
+        
+        // Handle URL with pageId query parameter: ?pageId=123456
+        int pageIdIndex = url.indexOf("pageId=");
+        if (pageIdIndex >= 0) {
+            // Start after "pageId="
+            int startIndex = pageIdIndex + 7;
+            int endIndex = url.indexOf("&", startIndex);
+            
+            // If no other parameters, use the end of the string
+            if (endIndex < 0) {
+                endIndex = url.length();
+            }
+            
+            // Extract the substring and verify it's numeric
+            String pageId = url.substring(startIndex, endIndex);
+            if (isNumeric(pageId)) {
+                return pageId;
+            }
+        }
+        
         return null;
+    }
+    
+    /**
+     * Helper method to check if a string contains only digits
+     */
+    private boolean isNumeric(String str) {
+        if (str == null || str.isEmpty()) {
+            return false;
+        }
+        
+        for (char c : str.toCharArray()) {
+            if (!Character.isDigit(c)) {
+                return false;
+            }
+        }
+        
+        return true;
     }
 
     /**
@@ -206,14 +248,14 @@ public class ConfluenceService {
         List<String> chunks = new ArrayList<>();
 
         // Try to split by paragraphs first
-        String[] paragraphs = text.split("\\n\\s*\\n");
+        List<String> paragraphs = splitIntoParagraphs(text);
 
         for (String paragraph : paragraphs) {
             if (paragraph.length() <= MAX_CHUNK_SIZE) {
                 chunks.add(paragraph);
             } else {
                 // If paragraph is too large, split by sentences
-                String[] sentences = paragraph.split("(?<=[.!?])\\s+");
+                List<String> sentences = splitIntoSentences(paragraph);
 
                 StringBuilder currentChunk = new StringBuilder();
                 for (String sentence : sentences) {
@@ -253,13 +295,13 @@ public class ConfluenceService {
      */
     private String extractTitle(String chunk) {
         // Find the first sentence or first few words
-        String firstSentence = chunk.split("(?<=[.!?])\\s+")[0];
+        String firstSentence = extractFirstSentence(chunk);
 
         if (firstSentence.length() <= 100) {
             return firstSentence;
         } else {
             // Just use the first few words
-            String[] words = chunk.split("\\s+");
+            String[] words = splitIntoWords(chunk);
             StringBuilder title = new StringBuilder();
 
             for (int i = 0; i < Math.min(10, words.length); i++) {
@@ -268,5 +310,214 @@ public class ConfluenceService {
 
             return title.toString().trim() + "...";
         }
+    }
+    
+    /**
+     * Remove HTML tags from a string using character-by-character parsing
+     * instead of regular expressions for improved performance.
+     */
+    private String removeHtmlTags(String html) {
+        if (html == null || html.isEmpty()) {
+            return "";
+        }
+        
+        StringBuilder result = new StringBuilder(html.length());
+        boolean inTag = false;
+        
+        for (int i = 0; i < html.length(); i++) {
+            char c = html.charAt(i);
+            
+            if (c == '<') {
+                inTag = true;
+                // Add space to preserve word boundaries
+                result.append(' ');
+                continue;
+            }
+            
+            if (c == '>') {
+                inTag = false;
+                continue;
+            }
+            
+            // Only append characters that are not inside tags
+            if (!inTag) {
+                result.append(c);
+            }
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * Normalize whitespace and replace common HTML entities
+     */
+    private String normalizeWhitespace(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        
+        // Replace common HTML entities
+        String result = text.replace("&nbsp;", " ")
+                           .replace("&lt;", "<")
+                           .replace("&gt;", ">")
+                           .replace("&amp;", "&")
+                           .replace("&quot;", "\"")
+                           .replace("&apos;", "'");
+        
+        // Normalize whitespace using character-by-character processing
+        StringBuilder normalized = new StringBuilder(result.length());
+        boolean lastWasSpace = false;
+        
+        for (int i = 0; i < result.length(); i++) {
+            char c = result.charAt(i);
+            
+            // Consider various whitespace characters
+            boolean isWhitespace = Character.isWhitespace(c);
+            
+            // Skip consecutive whitespace
+            if (isWhitespace) {
+                if (!lastWasSpace) {
+                    normalized.append(' ');
+                    lastWasSpace = true;
+                }
+            } else {
+                normalized.append(c);
+                lastWasSpace = false;
+            }
+        }
+        
+        return normalized.toString().trim();
+    }
+    
+    /**
+     * Extract the first sentence from a string without using complex regex
+     */
+    private String extractFirstSentence(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        
+        int end = text.length();
+        
+        // Look for common sentence endings followed by whitespace
+        for (int i = 0; i < text.length() - 1; i++) {
+            char c = text.charAt(i);
+            
+            if ((c == '.' || c == '!' || c == '?') && 
+                Character.isWhitespace(text.charAt(i + 1))) {
+                end = i + 1;
+                break;
+            }
+        }
+        
+        return text.substring(0, end);
+    }
+    
+    /**
+     * Split text into words without using regex
+     */
+    private String[] splitIntoWords(String text) {
+        if (text == null || text.isEmpty()) {
+            return new String[0];
+        }
+        
+        List<String> words = new ArrayList<>();
+        StringBuilder currentWord = new StringBuilder();
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            
+            if (Character.isWhitespace(c)) {
+                // End of word
+                if (currentWord.length() > 0) {
+                    words.add(currentWord.toString());
+                    currentWord = new StringBuilder();
+                }
+            } else {
+                currentWord.append(c);
+            }
+        }
+        
+        // Add last word if any
+        if (currentWord.length() > 0) {
+            words.add(currentWord.toString());
+        }
+        
+        return words.toArray(String[]::new);
+    }
+    
+    /**
+     * Split text into paragraphs based on double line breaks
+     */
+    private List<String> splitIntoParagraphs(String text) {
+        if (text == null || text.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        List<String> paragraphs = new ArrayList<>();
+        StringBuilder currentParagraph = new StringBuilder();
+        boolean lastWasNewline = false;
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            
+            if (c == '\n') {
+                if (lastWasNewline) {
+                    // Two consecutive newlines - end of paragraph
+                    if (currentParagraph.length() > 0) {
+                        paragraphs.add(currentParagraph.toString().trim());
+                        currentParagraph = new StringBuilder();
+                    }
+                    lastWasNewline = false; // Reset to avoid creating empty paragraph
+                } else {
+                    lastWasNewline = true;
+                    currentParagraph.append(' '); // Replace single newline with space
+                }
+            } else if (!Character.isWhitespace(c) || !lastWasNewline) {
+                // Only skip whitespace after newline
+                currentParagraph.append(c);
+                lastWasNewline = false;
+            }
+        }
+        
+        // Add last paragraph if any
+        if (currentParagraph.length() > 0) {
+            paragraphs.add(currentParagraph.toString().trim());
+        }
+        
+        return paragraphs;
+    }
+    
+    /**
+     * Split text into sentences without using complex regex
+     */
+    private List<String> splitIntoSentences(String text) {
+        if (text == null || text.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        List<String> sentences = new ArrayList<>();
+        StringBuilder currentSentence = new StringBuilder();
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            currentSentence.append(c);
+            
+            // Check for end of sentence markers followed by whitespace
+            if ((c == '.' || c == '!' || c == '?') && 
+                (i + 1 < text.length() && Character.isWhitespace(text.charAt(i + 1)))) {
+                sentences.add(currentSentence.toString().trim());
+                currentSentence = new StringBuilder();
+                // Skip the whitespace
+                i++;
+            }
+        }
+        
+        // Add the last sentence if there's anything left
+        if (currentSentence.length() > 0) {
+            sentences.add(currentSentence.toString().trim());
+        }
+        
+        return sentences;
     }
 }
