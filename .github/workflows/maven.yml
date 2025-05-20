@@ -1,0 +1,99 @@
+name: Java CI with Maven
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # PostgreSQL database credentials for both application and test
+      POSTGRES_USERNAME: ${{ secrets.POSTGRES_USERNAME || 'postgres' }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'password' }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: Set up Docker Compose
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Start PostgreSQL with pgvector using Docker Compose
+      run: |
+        docker compose -f compose.yaml up -d postgres
+        # Wait for PostgreSQL to be ready (give it more time to initialize)
+        echo "Waiting for PostgreSQL to be ready..."
+        sleep 10  # Add a delay of 10 seconds
+        # Try multiple times to check if PostgreSQL is ready
+        for i in {1..10}; do
+          echo "Attempt $i: Checking if PostgreSQL is ready..."
+          if docker compose -f compose.yaml exec -T postgres pg_isready -U "$POSTGRES_USERNAME"; then
+            echo "PostgreSQL is ready!"
+            break
+          fi
+          echo "PostgreSQL is not ready yet. Waiting..."
+          sleep 5
+        done
+        
+        echo "Creating test database..."
+        # Create the test database if it doesn't exist
+        docker compose -f compose.yaml exec -T postgres psql -U "$POSTGRES_USERNAME" -c "CREATE DATABASE code_review_test WITH OWNER $POSTGRES_USERNAME"
+        
+    - name: Debug Migration Files
+      run: |
+        echo "Listing migration files:"
+        find src/main/resources/db/migration -type f | sort
+        echo "Migration file contents:"
+        cat src/main/resources/db/migration/V5__add_active_column_to_confluence_urls.sql
+        cat src/main/resources/db/migration/V6__add_embedding_column_to_content_blocks.sql
+        
+    - name: Build with Maven and Run Tests
+      run: ./mvnw -B package --file pom.xml
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Set up Snyk
+      uses: snyk/actions/setup@master
+      
+    - name: Run Snyk to check for vulnerabilities
+      run: snyk test --all-projects
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
+      
+    # Using SonarCloud GitHub App for automatic analysis instead of manual analysis
+    # See: https://docs.sonarcloud.io/getting-started/github/
+      
+    - name: Build and publish Docker image
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        ./mvnw spring-boot:build-image -Dspring-boot.build-image.imageName=purnama/code-review:latest
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        
+    - name: Run Snyk to check Docker image for vulnerabilities
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: snyk container test purnama/code-review:latest
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
+      
+    - name: Monitor project in Snyk
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: snyk monitor --all-projects
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        
+    - name: Stop Docker containers
+      if: always()
+      run: docker compose -f compose.yaml down
