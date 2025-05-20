@@ -72,10 +72,7 @@ public class ContentGenerationService {
             String htmlContent = updatedUrl.getHtmlContent();
 
             // Convert HTML to plain text for OpenAI to process
-            String plainText = htmlContent.replaceAll("<[^>]*>", " ")
-                    .replaceAll("&nbsp;", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
+            String plainText = convertHtmlToPlainText(htmlContent);
 
             // Truncate if too long
             if (plainText.length() > 4000) {
@@ -154,5 +151,87 @@ public class ContentGenerationService {
             confluenceUrl.setTitle("Confluence Documentation");
         }
         confluenceUrl.setDescription("Content from Confluence page: " + confluenceUrl.getUrl());
+    }
+
+    /**
+     * Convert HTML content to plain text without using regular expressions
+     * for better performance and reliability.
+     * 
+     * @param html The HTML content to convert
+     * @return Plain text with HTML tags removed and whitespace normalized
+     */
+    private String convertHtmlToPlainText(String html) {
+        if (html == null || html.isEmpty()) {
+            return "";
+        }
+        
+        // Remove HTML tags
+        StringBuilder plainText = new StringBuilder();
+        boolean insideTag = false;
+        
+        for (int i = 0; i < html.length(); i++) {
+            char c = html.charAt(i);
+            
+            if (c == '<') {
+                insideTag = true;
+                plainText.append(' '); // Replace tags with a space
+            } else if (c == '>') {
+                insideTag = false;
+            } else if (!insideTag) {
+                // Only append characters outside of tags
+                plainText.append(c);
+            }
+        }
+        
+        // Replace common HTML entities
+        String text = plainText.toString()
+                .replace("&nbsp;", " ")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'");
+        
+        // Normalize whitespace
+        return normalizeWhitespace(text);
+    }
+    
+    /**
+     * Normalize whitespace in text without using regular expressions
+     * 
+     * @param text The text to normalize
+     * @return Text with consecutive whitespace characters replaced with a single space
+     */
+    private String normalizeWhitespace(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        
+        StringBuilder normalized = new StringBuilder();
+        boolean lastWasSpace = true; // Start with true to trim leading spaces
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            
+            // Check if the current character is a whitespace character
+            boolean isSpace = Character.isWhitespace(c);
+            
+            // Only append non-whitespace characters or a single space
+            if (!isSpace) {
+                normalized.append(c);
+                lastWasSpace = false;
+            } else if (!lastWasSpace) {
+                normalized.append(' ');
+                lastWasSpace = true;
+            }
+        }
+        
+        // Trim trailing space if necessary
+        int length = normalized.length();
+        if (length > 0 && normalized.charAt(length - 1) == ' ') {
+            normalized.deleteCharAt(length - 1);
+        }
+        
+        return normalized.toString();
     }
 }
