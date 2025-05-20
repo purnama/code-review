@@ -3,8 +3,8 @@ services:
     image: 'pgvector/pgvector:pg17'
     environment:
       - 'POSTGRES_DB=code_review'
-      - 'POSTGRES_PASSWORD=password'
-      - 'POSTGRES_USER=postgres'
+      - 'POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}'
+      - 'POSTGRES_USER=${POSTGRES_USERNAME:-postgres}'
     ports:
       - '5432:5432'
     volumes:
