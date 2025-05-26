@@ -49,6 +49,19 @@ A Spring Boot application that provides automated code reviews using AI models a
    ./mvnw clean install
    ./mvnw spring-boot:run
    ```
+   
+5. For local development with secrets, create a `start-local.sh` script (already in .gitignore)
+   ```bash
+   # Create the script based on the template below
+   cp start-local.sh.example start-local.sh
+   
+   # Edit to add your secrets
+   nano start-local.sh
+   
+   # Make it executable and run
+   chmod +x start-local.sh
+   ./start-local.sh
+   ```
 
 5. Access the application at `http://localhost:8080`
 

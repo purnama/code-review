@@ -1,0 +1,30 @@
+#!/bin/zsh
+
+# TEMPLATE: Copy this file to start-local.sh and fill in your secrets
+# The start-local.sh file is ignored by Git for security
+
+# Set your OAuth2 credentials
+export MICROSOFT_CLIENT_ID="your-microsoft-client-id"
+export MICROSOFT_CLIENT_SECRET="your-microsoft-client-secret"
+
+# Database configuration
+export POSTGRES_USERNAME="postgres"
+export POSTGRES_PASSWORD="password"
+
+# Confluence credentials
+export CONFLUENCE_BASE_URL="https://your-instance.atlassian.net/"
+export CONFLUENCE_USERNAME="your-email@example.com"
+export CONFLUENCE_API_TOKEN="your-api-token"
+export CONFLUENCE_SPACE_KEY="DEV"
+
+# OpenAI API key
+export OPENAI_API_KEY="your-openai-api-key"
+
+# Additional configuration variables
+# export OTHER_SECRET="value"
+
+echo "Environment variables set!"
+echo "Starting the application..."
+
+# Start the application using Maven
+./mvnw spring-boot:run

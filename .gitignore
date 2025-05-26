@@ -36,6 +36,7 @@ build/
 *.log
 application-local.properties
 application-dev.properties
+start-local.sh
 
 ### macOS ###
 .DS_Store
