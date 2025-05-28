@@ -147,7 +147,7 @@
 		<dependency>
 			<groupId>org.hibernate.orm</groupId>
 			<artifactId>hibernate-vector</artifactId>
-			<version>7.0.0.Final</version>
+			<version>6.6.15.Final</version>
 		</dependency>
 		
 		<!-- CommonMark for Markdown to HTML conversion -->
