@@ -9,7 +9,7 @@
 	</parent>
 	<groupId>de.purnama</groupId>
 	<artifactId>code-review</artifactId>
-	<version>0.0.4-SNAPSHOT</version>
+	<version>0.0.4</version>
 	<name>code-review</name>
 	<description>Code Review Tools based on AI</description>
 	<url>https://github.com/purnama/code-review</url>
@@ -34,7 +34,7 @@
 		<connection>scm:git:https://github.com/purnama/code-review.git</connection>
 		<developerConnection>scm:git:https://github.com/purnama/code-review.git</developerConnection>
 		<url>https://github.com/purnama/code-review</url>
-		<tag>HEAD</tag>
+		<tag>v0.0.4</tag>
 	</scm>
 	<properties>
 		<java.version>21</java.version>
