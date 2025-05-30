@@ -1,0 +1,91 @@
+name: "Maven Release and Publish"
+
+on:
+  workflow_dispatch:
+    # No specific inputs needed as we're using Maven Release Plugin's default behavior
+
+jobs:
+  release:
+    name: Maven Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+
+    env:
+      # PostgreSQL database credentials for tests during release
+      POSTGRES_USERNAME: ${{ secrets.POSTGRES_USERNAME || 'postgres' }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'password' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Important for git history in release plugin
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+        server-id: github
+        settings-path: ${{ github.workspace }}
+
+    - name: Configure Git user
+      run: |
+        git config user.email "actions@github.com"
+        git config user.name "GitHub Actions"
+
+    - name: Set up Docker Compose
+      uses: docker/setup-buildx-action@v3
+
+    - name: Start PostgreSQL with pgvector using Docker Compose
+      run: |
+        docker compose -f compose.yaml up -d postgres
+        # Wait for PostgreSQL to be ready
+        echo "Waiting for PostgreSQL to be ready..."
+        sleep 10
+        # Try multiple times to check if PostgreSQL is ready
+        for i in {1..10}; do
+          echo "Attempt $i: Checking if PostgreSQL is ready..."
+          if docker compose -f compose.yaml exec -T postgres pg_isready -U "$POSTGRES_USERNAME"; then
+            echo "PostgreSQL is ready!"
+            break
+          fi
+          echo "PostgreSQL is not ready yet. Waiting..."
+          sleep 5
+        done
+        
+        echo "Creating test database..."
+        # Create the test database if it doesn't exist
+        docker compose -f compose.yaml exec -T postgres psql -U "$POSTGRES_USERNAME" -c "CREATE DATABASE code_review_test WITH OWNER $POSTGRES_USERNAME"
+
+    - name: Perform Maven Release
+      run: |
+        ./mvnw release:clean release:prepare release:perform -B \
+        -DscmCommentPrefix="[maven-release-plugin] " \
+        -DtagNameFormat="v@{project.version}" \
+        -Darguments="-Dmaven.test.skip=true -s ${{ github.workspace }}/settings.xml"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    - name: Extract Version from pom.xml
+      id: get-version
+      run: |
+        VERSION=$(grep -m 1 "<version>" pom.xml | sed -e 's/.*<version>\(.*\)<\/version>.*/\1/' | sed 's/-SNAPSHOT//')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release v${{ env.VERSION }}
+        tag_name: v${{ env.VERSION }}
+        generate_release_notes: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Stop Docker containers
+      if: always()
+      run: docker compose -f compose.yaml down

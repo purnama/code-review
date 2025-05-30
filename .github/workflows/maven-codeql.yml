@@ -1,4 +1,4 @@
-name: "Maven CI with CodeQL"
+name: "Maven CI with CodeQL and GitHub Packages"
 
 on:
   push:
@@ -16,6 +16,7 @@ jobs:
       actions: read
       contents: read
       security-events: write
+      packages: write # Added permission for GitHub Packages
 
     strategy:
       fail-fast: false
@@ -38,6 +39,8 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
+        server-id: github # Used for Maven publishing to GitHub Packages
+        settings-path: ${{ github.workspace }} # Path to generated settings.xml
 
     # Initialize CodeQL for security analysis (from codeql.yml)
     - name: Initialize CodeQL
@@ -99,6 +102,12 @@ jobs:
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       continue-on-error: true
+
+    # New step to publish to GitHub Packages
+    - name: Publish to GitHub Packages
+      run: ./mvnw deploy -s ${{ github.workspace }}/settings.xml -DskipTests
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # Using SonarCloud GitHub App for automatic analysis instead of manual analysis
     # See: https://docs.sonarcloud.io/getting-started/github/

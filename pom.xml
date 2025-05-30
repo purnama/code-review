@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>de.purnama</groupId>
 	<artifactId>code-review</artifactId>
-	<version>1.0.0-SNAPSHOT</version>
+	<version>0.0.1-SNAPSHOT</version>
 	<name>code-review</name>
 	<description>Code Review Tools based on AI</description>
 	<url>https://github.com/purnama/code-review</url>
@@ -32,10 +32,10 @@
 		</developer>
 	</developers>
 	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
+		<connection>scm:git:https://github.com/purnama/code-review.git</connection>
+		<developerConnection>scm:git:https://github.com/purnama/code-review.git</developerConnection>
+		<url>https://github.com/purnama/code-review</url>
+		<tag>HEAD</tag>
 	</scm>
 	<properties>
 		<java.version>21</java.version>
@@ -128,7 +128,7 @@
 			<groupId>nz.net.ultraq.thymeleaf</groupId>
 			<artifactId>thymeleaf-layout-dialect</artifactId>
 		</dependency>
-		
+
 		<!-- Spring Security and OAuth2 -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -142,14 +142,14 @@
 			<groupId>org.thymeleaf.extras</groupId>
 			<artifactId>thymeleaf-extras-springsecurity6</artifactId>
 		</dependency>
-		
+
 		<!-- PGVector JDBC type support -->
 		<dependency>
 			<groupId>org.hibernate.orm</groupId>
 			<artifactId>hibernate-vector</artifactId>
 			<version>6.6.15.Final</version>
 		</dependency>
-		
+
 		<!-- CommonMark for Markdown to HTML conversion -->
 		<dependency>
 			<groupId>org.commonmark</groupId>
@@ -171,7 +171,7 @@
 			<artifactId>commonmark-ext-autolink</artifactId>
 			<version>0.24.0</version>
 		</dependency>
-		
+
 		<!-- HttpClient 5 is required by Spring AI for OpenAI API communication -->
 		<dependency>
 			<groupId>org.apache.httpcomponents.client5</groupId>
@@ -245,5 +245,19 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<!-- GitHub Packages Repository Configuration -->
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/purnama/code-review</url>
+		</repository>
+		<snapshotRepository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/purnama/code-review</url>
+		</snapshotRepository>
+	</distributionManagement>
 
 </project>
