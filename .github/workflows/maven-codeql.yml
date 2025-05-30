@@ -88,51 +88,14 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-    # Perform CodeQL Analysis (from codeql.yml)
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+    - name: SonarCloud Analysis
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
-        category: "/language:${{matrix.language}}"
+        args: >
+          -Dsonar.projectKey=code-review
+          -Dsonar.organization=purnama
 
-    - name: Set up Snyk
-      uses: snyk/actions/setup@master
-
-    - name: Run Snyk to check for vulnerabilities
-      run: snyk test --all-projects
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      continue-on-error: true
-
-    # New step to publish to GitHub Packages
-    - name: Publish to GitHub Packages
-      run: ./mvnw deploy -s ${{ github.workspace }}/settings.xml -DskipTests
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # Using SonarCloud GitHub App for automatic analysis instead of manual analysis
-    # See: https://docs.sonarcloud.io/getting-started/github/
-
-    - name: Build and publish Docker image
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: |
-        ./mvnw spring-boot:build-image -Dspring-boot.build-image.imageName=purnama/code-review:latest
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-    - name: Run Snyk to check Docker image for vulnerabilities
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: snyk container test purnama/code-review:latest
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      continue-on-error: true
-
-    - name: Monitor project in Snyk
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: snyk monitor --all-projects
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
-    - name: Stop Docker containers
-      if: always()
-      run: docker compose -f compose.yaml down
+    - name: SonarQube Quality Gate
