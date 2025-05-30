@@ -31,6 +31,8 @@ jobs:
         distribution: 'temurin'
         cache: maven
         server-id: github
+        server-username: GITHUB_ACTOR
+        server-password: GITHUB_TOKEN
         settings-path: ${{ github.workspace }}
 
     - name: Configure Git user
