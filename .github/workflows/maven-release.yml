@@ -101,7 +101,8 @@ jobs:
     - name: Extract Version from pom.xml
       id: get-version
       run: |
-        VERSION=$(grep -m 1 "<version>" pom.xml | sed -e 's/.*<version>\(.*\)<\/version>.*/\1/' | sed 's/-SNAPSHOT//')
+        # Extract project version (not the parent version)
+        VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT//')
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Create Release
