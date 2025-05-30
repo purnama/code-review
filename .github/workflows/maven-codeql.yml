@@ -98,4 +98,12 @@ jobs:
           -Dsonar.projectKey=code-review
           -Dsonar.organization=purnama
 
-    - name: SonarQube Quality Gate
+    - name: SonarQube Quality Gate check
+      uses: sonarsource/sonarqube-quality-gate-action@master
+      # Force to fail step after specific time
+      timeout-minutes: 5
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        scanMetadataReportFile: .scannerwork/report-task.txt
+      # This step will fail if the Quality Gate status is not OK
