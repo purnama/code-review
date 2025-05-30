@@ -66,12 +66,36 @@ jobs:
 
     - name: Perform Maven Release
       run: |
-        ./mvnw release:clean release:prepare release:perform -B \
+        # Generate custom settings.xml with GitHub credentials for both release:prepare and perform phases
+        cat > custom-settings.xml << EOF
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                                     http://maven.apache.org/xsd/settings-1.0.0.xsd">
+          <servers>
+            <server>
+              <id>github</id>
+              <username>\${env.GITHUB_ACTOR}</username>
+              <password>\${env.GITHUB_TOKEN}</password>
+            </server>
+          </servers>
+        </settings>
+        EOF
+        
+        # Run release:prepare
+        ./mvnw release:clean release:prepare -B \
         -DscmCommentPrefix="[maven-release-plugin] " \
         -DtagNameFormat="v@{project.version}" \
-        -Darguments="-Dmaven.test.skip=true -s ${{ github.workspace }}/settings.xml"
+        -Darguments="-Dmaven.test.skip=true -s custom-settings.xml" \
+        -s custom-settings.xml
+        
+        # Run release:perform with explicit settings
+        ./mvnw release:perform -B \
+        -Darguments="-Dmaven.test.skip=true -s custom-settings.xml" \
+        -s custom-settings.xml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_ACTOR: ${{ github.actor }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     - name: Extract Version from pom.xml
