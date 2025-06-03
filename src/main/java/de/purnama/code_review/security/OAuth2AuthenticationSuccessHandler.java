@@ -55,10 +55,19 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
         log.info("Authentication successful. Authentication class: {}", authentication.getClass().getName());
         log.info("Authentication name: {}", authentication.getName());
         log.info("Authentication authorities: {}", authentication.getAuthorities());
-        Map<String, Object> claims = ((DefaultOidcUser) authentication.getPrincipal()).getUserInfo().getClaims();
-        log.info("Name: {}", claims.get("givenname")+ " " + claims.get("familyname"));
-        log.info("Email: {}", claims.get("email"));
-        log.info("picture: {}", claims.get("picture"));
+
+        Object principal = authentication.getPrincipal();
+
+        // Handle OIDC authentication
+        if (principal instanceof DefaultOidcUser) {
+            DefaultOidcUser oidcUser = (DefaultOidcUser) principal;
+            Map<String, Object> claims = oidcUser.getUserInfo().getClaims();
+            log.info("Name: {}", claims.get("givenname") + " " + claims.get("familyname"));
+            log.info("Email: {}", claims.get("email"));
+            log.info("picture: {}", claims.get("picture"));
+        }
+
+        // Handle OAuth2 authentication
         if (authentication instanceof OAuth2AuthenticationToken) {
             OAuth2User oauth2User = ((OAuth2AuthenticationToken) authentication).getPrincipal();
             log.info("OAuth2 principal class: {}", oauth2User.getClass().getName());

@@ -164,5 +164,159 @@ class CustomOAuth2UserServiceExtendedTest {
         });
         assertTrue(exception.getMessage().contains("You're signed up with FACEBOOK"));
     }
-}
 
+    @Test
+    void extractUserInfo_WithNullParameters_ShouldThrowException() throws Exception {
+        // Use reflection to access the private method
+        java.lang.reflect.Method extractUserInfoMethod = CustomOAuth2UserService.class.getDeclaredMethod(
+                "extractUserInfo", String.class, OAuth2User.class);
+        extractUserInfoMethod.setAccessible(true);
+
+        try {
+            // Test with null oAuth2User
+            extractUserInfoMethod.invoke(userService, "google", null);
+            fail("Expected exception was not thrown");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Verify the cause is OAuth2AuthenticationException
+            assertTrue(e.getCause() instanceof OAuth2AuthenticationException);
+            OAuth2AuthenticationException authEx = (OAuth2AuthenticationException) e.getCause();
+            assertEquals("invalid_user_data", authEx.getError().getErrorCode());
+        }
+
+        try {
+            // Test with null registrationId
+            extractUserInfoMethod.invoke(userService, null, oAuth2User);
+            fail("Expected exception was not thrown");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Verify the cause is OAuth2AuthenticationException
+            assertTrue(e.getCause() instanceof OAuth2AuthenticationException);
+            OAuth2AuthenticationException authEx = (OAuth2AuthenticationException) e.getCause();
+            assertEquals("invalid_user_data", authEx.getError().getErrorCode());
+        }
+    }
+
+    @Test
+    void extractUserInfo_UnsupportedProvider_ShouldThrowException() throws Exception {
+        // Set up the extractors list
+        List<OAuth2UserInfoExtractor> extractorsList = new ArrayList<>();
+        extractorsList.add(googleExtractor);
+        extractorsList.add(facebookExtractor);
+
+        // Use reflection to set the list
+        ReflectionTestUtils.setField(userService, "userInfoExtractors", extractorsList);
+
+        // Google extractor won't support "unsupported" registration ID
+        when(googleExtractor.supports("unsupported")).thenReturn(false);
+        when(facebookExtractor.supports("unsupported")).thenReturn(false);
+
+        // Use reflection to access the private method
+        java.lang.reflect.Method extractUserInfoMethod = CustomOAuth2UserService.class.getDeclaredMethod(
+                "extractUserInfo", String.class, OAuth2User.class);
+        extractUserInfoMethod.setAccessible(true);
+
+        try {
+            // Test with unsupported provider
+            extractUserInfoMethod.invoke(userService, "unsupported", oAuth2User);
+            fail("Expected exception was not thrown");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Verify the cause is OAuth2AuthenticationException
+            assertTrue(e.getCause() instanceof OAuth2AuthenticationException);
+            OAuth2AuthenticationException authEx = (OAuth2AuthenticationException) e.getCause();
+            assertEquals("unsupported_provider", authEx.getError().getErrorCode());
+        }
+    }
+
+    @Test
+    void registerNewUser_ShouldThrowException_WhenUserInfoIsNull() throws Exception {
+        // Use reflection to access the private method
+        java.lang.reflect.Method registerNewUserMethod = CustomOAuth2UserService.class.getDeclaredMethod(
+                "registerNewUser", OAuth2UserRequest.class, UserInfo.class, User.AuthProvider.class);
+        registerNewUserMethod.setAccessible(true);
+
+        try {
+            // Test with null userInfo
+            registerNewUserMethod.invoke(userService, oAuth2UserRequest, null, User.AuthProvider.GOOGLE);
+            fail("Expected exception was not thrown");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Verify the cause is OAuth2AuthenticationException
+            assertTrue(e.getCause() instanceof OAuth2AuthenticationException);
+            OAuth2AuthenticationException authEx = (OAuth2AuthenticationException) e.getCause();
+            assertEquals("invalid_user_info", authEx.getError().getErrorCode());
+            assertEquals("Email is required to register a new user", authEx.getError().getDescription());
+        }
+
+        try {
+            // Test with userInfo that has null email
+            UserInfo userInfoWithNullEmail = new UserInfo("123", null, "Test User", "https://example.com/picture.jpg", "sub");
+            registerNewUserMethod.invoke(userService, oAuth2UserRequest, userInfoWithNullEmail, User.AuthProvider.GOOGLE);
+            fail("Expected exception was not thrown");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Verify the cause is OAuth2AuthenticationException
+            assertTrue(e.getCause() instanceof OAuth2AuthenticationException);
+            OAuth2AuthenticationException authEx = (OAuth2AuthenticationException) e.getCause();
+            assertEquals("invalid_user_info", authEx.getError().getErrorCode());
+            assertEquals("Email is required to register a new user", authEx.getError().getDescription());
+        }
+    }
+
+    @Test
+    void updateExistingUser_ShouldHandleNullParameters() throws Exception {
+        // Use reflection to access the private method
+        java.lang.reflect.Method updateExistingUserMethod = CustomOAuth2UserService.class.getDeclaredMethod(
+                "updateExistingUser", User.class, UserInfo.class);
+        updateExistingUserMethod.setAccessible(true);
+
+        // Create a test user
+        User testUser = new User();
+        testUser.setId(1L);
+        testUser.setEmail("test@example.com");
+        testUser.setName("Original Name");
+        testUser.setPictureUrl("https://original-picture.jpg");
+
+        // Test with null user
+        Object result = updateExistingUserMethod.invoke(userService, null, new UserInfo(
+            "123", "email@example.com", "Test Name", "https://picture.jpg", "sub"));
+        assertNull(result, "Should return null when user is null");
+
+        // Test with null userInfo
+        result = updateExistingUserMethod.invoke(userService, testUser, null);
+        assertEquals(testUser, result, "Should return the original user when userInfo is null");
+
+        // Verify the user was not modified
+        assertEquals("Original Name", testUser.getName(), "User name should not be changed");
+        assertEquals("https://original-picture.jpg", testUser.getPictureUrl(), "User picture URL should not be changed");
+    }
+
+    @Test
+    void processOAuth2User_ShouldReturnOriginalOAuth2User_WhenOidcUserProvided() throws Exception {
+        // Use reflection to access the private method
+        java.lang.reflect.Method processOAuth2UserMethod = CustomOAuth2UserService.class.getDeclaredMethod(
+                "processOAuth2User", OAuth2UserRequest.class, OAuth2User.class);
+        processOAuth2UserMethod.setAccessible(true);
+
+        // Create a mock OidcUser
+        org.springframework.security.oauth2.core.oidc.user.OidcUser oidcUser = mock(org.springframework.security.oauth2.core.oidc.user.OidcUser.class);
+
+        // Setup userInfoExtractors
+        List<OAuth2UserInfoExtractor> extractors = Arrays.asList(googleExtractor);
+        ReflectionTestUtils.setField(userService, "userInfoExtractors", extractors);
+
+        // Setup user info extraction
+        UserInfo userInfo = new UserInfo("123456", "test@example.com", "Test User", "https://example.com/picture.jpg", "sub");
+        when(googleExtractor.supports(any())).thenReturn(true);
+        when(googleExtractor.extractUserInfo(any())).thenReturn(userInfo);
+
+        // Setup user repository to return empty (to simulate a new user registration)
+        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
+
+        // Invoke the method
+        OAuth2User result = (OAuth2User) processOAuth2UserMethod.invoke(userService, oAuth2UserRequest, oidcUser);
+
+        // Verify that the original OidcUser is returned
+        assertSame(oidcUser, result, "For OidcUser, the original object should be returned");
+
+        // Verify that user was saved (registration happens)
+        verify(userRepository).save(any(User.class));
+    }
+}

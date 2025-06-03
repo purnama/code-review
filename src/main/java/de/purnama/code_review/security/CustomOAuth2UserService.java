@@ -78,7 +78,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                     null));
             }
 
-            updateExistingUser(user, userInfo);
+            user = updateExistingUser(user, userInfo);
         } else {
             // Otherwise, register a new user
             user = registerNewUser(userRequest, userInfo, provider);
@@ -153,9 +153,9 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         return user;
     }
 
-    private void updateExistingUser(User user, UserInfo userInfo) {
+    private User updateExistingUser(User user, UserInfo userInfo) {
         if (user == null || userInfo == null) {
-            return;  // Nothing to update
+            return user;  // Return the unchanged user
         }
 
         // Only update if values are provided and not null
@@ -166,5 +166,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         if (StringUtils.hasText(userInfo.pictureUrl())) {
             user.setPictureUrl(userInfo.pictureUrl());
         }
+
+        return user;
     }
 }
