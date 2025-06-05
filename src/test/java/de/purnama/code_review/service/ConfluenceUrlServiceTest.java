@@ -219,6 +219,25 @@ class ConfluenceUrlServiceTest {
         verify(confluenceUrlRepository).save(url);
     }
 
+    @Test void toggleActive_togglesFromActiveToInactive() {
+        // Arrange
+        Long id = 1L;
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(id);
+        url.setActive(true); // Initially active
+
+        when(confluenceUrlRepository.findById(id)).thenReturn(Optional.of(url));
+
+        // Act
+        boolean result = service.toggleActive(id);
+
+        // Assert
+        assertTrue(result);
+        assertFalse(url.isActive()); // Should be toggled to inactive
+        verify(confluenceUrlRepository).findById(id);
+        verify(confluenceUrlRepository).save(url);
+    }
+
     @Test void toggleActive_returnsFalseIfNotFound() throws ConfluenceException {
         // Arrange
         Long id = 1L;
@@ -373,5 +392,272 @@ class ConfluenceUrlServiceTest {
         assertEquals(expectedUrl, result.get());
         assertEquals(contentBlocks, result.get().getContentBlocks());
         verify(confluenceUrlRepository).findByIdWithContentBlocks(id);
+    }
+
+    @Test
+    void save_whenIdNullAndTitleEmpty_shouldFetchTitle() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle(""); // Empty title
+        url.setActive(false); // Set inactive to avoid the second fetch in processContentIfActive
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(url);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService, times(1)).fetchConfluenceContent(url); // Only for title fetching
+        verify(confluenceUrlRepository, times(1)).save(url);
+    }
+    
+    @Test
+    void save_whenIdNullAndTitleNull_shouldFetchTitle() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle(null); // Null title
+        url.setActive(false); // Set inactive to avoid the second fetch in processContentIfActive
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(url);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService, times(1)).fetchConfluenceContent(url); // Only for title fetching
+        verify(confluenceUrlRepository, times(1)).save(url);
+    }
+    
+    @Test
+    void save_whenIdNotNullOrTitlePresent_shouldNotFetchTitle() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L); // ID is not null
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Existing Title");
+        url.setActive(false); // Set inactive to avoid any fetches in processContentIfActive
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(url);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService, never()).fetchConfluenceContent(url); // Should not be called for title fetching
+        verify(confluenceUrlRepository, times(1)).save(url);
+    }
+    
+    @Test
+    void save_whenActiveAndHtmlContentPresent_shouldProcessExistingContent() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent("<html><body>Test content</body></html>");
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent("<html><body>Test content</body></html>");
+        
+        List<ContentBlock> contentBlocks = List.of(new ContentBlock());
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.processContentIntoBlocks(savedUrl)).thenReturn(contentBlocks);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService).processContentIntoBlocks(savedUrl);
+        verify(embeddingService).generateAndSaveEmbedding(any(ContentBlock.class));
+        verify(confluenceUrlRepository, times(2)).save(any(ConfluenceUrl.class)); // Once for initial save, once after processing
+    }
+    
+    @Test
+    void save_whenActiveAndHtmlContentNull_shouldFetchAndProcessContent() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent(null);
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent(null);
+        
+        List<ContentBlock> contentBlocks = List.of(new ContentBlock());
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.fetchConfluenceContent(savedUrl)).thenReturn(savedUrl);
+        when(confluenceService.processContentIntoBlocks(savedUrl)).thenReturn(contentBlocks);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService).fetchConfluenceContent(savedUrl);
+        verify(confluenceService).processContentIntoBlocks(savedUrl);
+        verify(embeddingService).generateAndSaveEmbedding(any(ContentBlock.class));
+    }
+    
+    @Test
+    void save_whenNotActive_shouldNotProcessContent() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(false);
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(false);
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        
+        // Act
+        service.save(url);
+        
+        // Assert
+        verify(confluenceService, never()).fetchConfluenceContent(any(ConfluenceUrl.class));
+        verify(confluenceService, never()).processContentIntoBlocks(any(ConfluenceUrl.class));
+    }
+    
+    @Test
+    void processExistingHtmlContent_handlesConfluenceException() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent("<html><body>Test content</body></html>");
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent("<html><body>Test content</body></html>");
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.processContentIntoBlocks(savedUrl))
+            .thenThrow(new ConfluenceException("Error processing content"));
+        
+        // Act
+        ConfluenceUrl result = service.save(url);
+        
+        // Assert
+        assertEquals(savedUrl, result);
+        verify(confluenceService).processContentIntoBlocks(savedUrl);
+        // Should not attempt to generate embeddings
+        verify(embeddingService, never()).generateAndSaveEmbedding(any(ContentBlock.class));
+    }
+
+    @Test
+    void processExistingHtmlContent_handlesGenericException() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent("<html><body>Test content</body></html>");
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent("<html><body>Test content</body></html>");
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.processContentIntoBlocks(savedUrl))
+            .thenThrow(new RuntimeException("Unexpected error processing content"));
+        
+        // Act
+        ConfluenceUrl result = service.save(url);
+        
+        // Assert
+        assertEquals(savedUrl, result);
+        verify(confluenceService).processContentIntoBlocks(savedUrl);
+        // Should not attempt to generate embeddings
+        verify(embeddingService, never()).generateAndSaveEmbedding(any(ContentBlock.class));
+    }
+    
+    @Test
+    void fetchAndProcessContent_handlesConfluenceException() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent(null); // No HTML content, so it will try to fetch
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent(null);
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.fetchConfluenceContent(savedUrl))
+            .thenThrow(new ConfluenceException("Error fetching content"));
+        
+        // Act
+        ConfluenceUrl result = service.save(url);
+        
+        // Assert
+        assertEquals(savedUrl, result);
+        verify(confluenceService).fetchConfluenceContent(savedUrl);
+        verify(confluenceService, never()).processContentIntoBlocks(any(ConfluenceUrl.class));
+        verify(embeddingService, never()).generateAndSaveEmbedding(any(ContentBlock.class));
+    }
+    
+    @Test
+    void fetchAndProcessContent_handlesGenericException() throws ConfluenceException {
+        // Arrange
+        ConfluenceUrl url = new ConfluenceUrl();
+        url.setId(1L);
+        url.setUrl("https://confluence.example.com/pages/123456");
+        url.setTitle("Test Page");
+        url.setActive(true);
+        url.setHtmlContent(null); // No HTML content, so it will try to fetch
+        
+        ConfluenceUrl savedUrl = new ConfluenceUrl();
+        savedUrl.setId(1L);
+        savedUrl.setUrl("https://confluence.example.com/pages/123456");
+        savedUrl.setTitle("Test Page");
+        savedUrl.setActive(true);
+        savedUrl.setHtmlContent(null);
+        
+        when(confluenceUrlRepository.save(any(ConfluenceUrl.class))).thenReturn(savedUrl);
+        when(confluenceService.fetchConfluenceContent(savedUrl))
+            .thenThrow(new RuntimeException("Unexpected error fetching content"));
+        
+        // Act
+        ConfluenceUrl result = service.save(url);
+        
+        // Assert
+        assertEquals(savedUrl, result);
+        verify(confluenceService).fetchConfluenceContent(savedUrl);
+        verify(confluenceService, never()).processContentIntoBlocks(any(ConfluenceUrl.class));
+        verify(embeddingService, never()).generateAndSaveEmbedding(any(ContentBlock.class));
     }
 }

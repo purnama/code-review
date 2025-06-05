@@ -456,27 +456,28 @@ public class ConfluenceService {
         
         List<String> paragraphs = new ArrayList<>();
         StringBuilder currentParagraph = new StringBuilder();
-        boolean lastWasNewline = false;
+        int consecutiveNewlines = 0;
         
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             
             if (c == '\n') {
-                if (lastWasNewline) {
-                    // Two consecutive newlines - end of paragraph
+                consecutiveNewlines++;
+                
+                if (consecutiveNewlines == 2) {
+                    // Two or more consecutive newlines - end of paragraph
                     if (currentParagraph.length() > 0) {
                         paragraphs.add(currentParagraph.toString().trim());
                         currentParagraph = new StringBuilder();
                     }
-                    lastWasNewline = false; // Reset to avoid creating empty paragraph
-                } else {
-                    lastWasNewline = true;
+                    // We'll stay in this state until we find a non-newline character
+                } else if (consecutiveNewlines == 1) {
                     currentParagraph.append(' '); // Replace single newline with space
                 }
-            } else if (!Character.isWhitespace(c) || !lastWasNewline) {
-                // Only skip whitespace after newline
+                // If consecutiveNewlines > 2, just ignore additional newlines
+            } else {
+                consecutiveNewlines = 0;
                 currentParagraph.append(c);
-                lastWasNewline = false;
             }
         }
         
