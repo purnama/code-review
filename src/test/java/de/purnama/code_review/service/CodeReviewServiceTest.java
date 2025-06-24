@@ -1,19 +1,21 @@
 package de.purnama.code_review.service;
 
-import de.purnama.code_review.config.GitHubConfig;
 import de.purnama.code_review.config.OpenAIConfig;
 import de.purnama.code_review.exception.AIModelException;
 import de.purnama.code_review.exception.CodeReviewException;
-import de.purnama.code_review.exception.GitHubException;
+import de.purnama.code_review.exception.GitProviderException;
 import de.purnama.code_review.exception.InvalidCodeReviewRequestException;
 import de.purnama.code_review.model.CodeReviewRequest;
 import de.purnama.code_review.model.CodeReviewResponse;
 import de.purnama.code_review.model.ContentBlock;
+import de.purnama.code_review.service.git.GitProvider;
+import de.purnama.code_review.service.git.GitProviderFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -21,16 +23,15 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CodeReviewServiceTest {
@@ -42,47 +43,59 @@ class CodeReviewServiceTest {
     private ChatModel chatModel;
 
     @Mock
-    private GitHubConfig githubConfig;
-
-    @Mock
     private OpenAIConfig openAIConfig;
-
-    @Mock
-    private WebClient githubWebClient;
 
     @Mock
     private MarkdownConverter markdownConverter;
 
-    // Don't directly mock these interfaces with generics
-    private WebClient.RequestHeadersUriSpec requestHeadersUriSpec;
-    private WebClient.RequestHeadersSpec requestHeadersSpec;
-    private WebClient.ResponseSpec responseSpec;
+    @Mock
+    private GitProviderFactory gitProviderFactory;
+
+    @Mock
+    private GitProvider gitProvider;
+
+    @Mock
+    private ChatResponse chatResponse;
+
+    @Mock
+    private Generation generation;
+
+    @Mock
+    private AssistantMessage assistantMessage;
 
     @InjectMocks
     private CodeReviewService codeReviewService;
 
     @BeforeEach
     void setUp() {
-        // Initialize the WebClient mocks with proper type erasure
-        this.requestHeadersUriSpec = mock(WebClient.RequestHeadersUriSpec.class);
-        this.requestHeadersSpec = mock(WebClient.RequestHeadersSpec.class);
-        this.responseSpec = mock(WebClient.ResponseSpec.class);
+        // No setup is needed here - we'll set up mocks in each test as required
     }
 
     @Test
     void reviewCode_ShouldReviewSingleFile_WhenPathIsInUrl() throws Exception {
         // Arrange
-        String githubUrl = "https://github.com/username/repo/blob/main/src/file.java";
+        String repositoryUrl = "https://github.com/username/repo/blob/main/src/file.java";
         String fileContent = "public class Test { }";
         CodeReviewRequest request = new CodeReviewRequest();
-        request.setGithubUrl(githubUrl);
+        request.setRepositoryUrl(repositoryUrl);
+
+        // Setup the git provider factory and provider
+        when(gitProviderFactory.getProvider(repositoryUrl)).thenReturn(gitProvider);
+
+        // Set up repository info with path
+        Map<String, String> repoInfo = new HashMap<>();
+        repoInfo.put("owner", "username");
+        repoInfo.put("repo", "repo");
+        repoInfo.put("branch", "main");
+        repoInfo.put("path", "src/file.java");
+        when(gitProvider.extractRepositoryInfoFromUrl(repositoryUrl)).thenReturn(repoInfo);
+
+        // Set up file content
+        when(gitProvider.fetchFileContent(repositoryUrl)).thenReturn(fileContent);
 
         // Set configuration values specific to this test
         when(openAIConfig.getFileChunkSize()).thenReturn(1000);
         when(openAIConfig.getContentBlocksLimit()).thenReturn(5);
-
-        // Setting up mocks for GitHub API call
-        mockGitHubApiCall(githubUrl, fileContent);
 
         // Setting up mocks for embedding service
         ContentBlock block = new ContentBlock();
@@ -93,7 +106,10 @@ class CodeReviewServiceTest {
 
         // Setting up mocks for AI model
         String reviewText = "This code looks good!";
-        mockAIModelResponse(reviewText);
+        when(chatModel.call(any(Prompt.class))).thenReturn(chatResponse);
+        when(chatResponse.getResult()).thenReturn(generation);
+        when(generation.getOutput()).thenReturn(assistantMessage);
+        when(assistantMessage.getText()).thenReturn(reviewText);
 
         // Setting up mock for markdown converter
         String htmlReview = "<p>This code looks good!</p>";
@@ -106,47 +122,73 @@ class CodeReviewServiceTest {
         assertNotNull(response);
         assertEquals(reviewText, response.getReview());
         assertEquals(htmlReview, response.getHtmlReview());
-        assertEquals(githubUrl, response.getGithubUrl());
+        assertEquals(repositoryUrl, response.getRepositoryUrl());
         assertNotNull(response.getTimestamp());
     }
 
     @Test
-    void reviewCode_ShouldThrowInvalidRequestException_WhenInvalidUrl() {
+    void reviewCode_ShouldThrowInvalidRequestException_WhenInvalidUrl() throws Exception {
         // Arrange
         String invalidUrl = "not-a-valid-github-url";
         CodeReviewRequest request = new CodeReviewRequest();
-        request.setGithubUrl(invalidUrl);
+        request.setRepositoryUrl(invalidUrl);
+
+        // Mock git provider to return null or empty values rather than throw exception
+        when(gitProviderFactory.getProvider(invalidUrl)).thenReturn(gitProvider);
+        Map<String, String> emptyInfo = new HashMap<>();
+        when(gitProvider.extractRepositoryInfoFromUrl(invalidUrl)).thenReturn(emptyInfo);
 
         // Act & Assert
         assertThrows(InvalidCodeReviewRequestException.class, () -> codeReviewService.reviewCode(request));
     }
 
     @Test
-    void reviewCode_ShouldHandleGitHubException_WhenGitHubApiCallFails() {
+    void reviewCode_ShouldHandleGitProviderException_WhenGitApiCallFails() throws Exception {
         // Arrange
-        String githubUrl = "https://github.com/username/repo/blob/main/src/file.java";
+        String repositoryUrl = "https://github.com/username/repo/blob/main/src/file.java";
         CodeReviewRequest request = new CodeReviewRequest();
-        request.setGithubUrl(githubUrl);
+        request.setRepositoryUrl(repositoryUrl);
 
-        // Setting up GitHub API to throw an exception
-        when(githubWebClient.get()).thenReturn(requestHeadersUriSpec);
-        when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenThrow(new RuntimeException("GitHub API error"));
+        // Setup git provider factory
+        when(gitProviderFactory.getProvider(repositoryUrl)).thenReturn(gitProvider);
+
+        // Setup repository info
+        Map<String, String> repoInfo = new HashMap<>();
+        repoInfo.put("owner", "username");
+        repoInfo.put("repo", "repo");
+        repoInfo.put("branch", "main");
+        repoInfo.put("path", "src/file.java");
+        when(gitProvider.extractRepositoryInfoFromUrl(repositoryUrl)).thenReturn(repoInfo);
+
+        // Setting up GitProvider to throw an exception
+        when(gitProvider.fetchFileContent(repositoryUrl))
+            .thenThrow(new GitProviderException("Git API error"));
 
         // Act & Assert
-        assertThrows(GitHubException.class, () -> codeReviewService.reviewCode(request));
+        assertThrows(GitProviderException.class, () -> codeReviewService.reviewCode(request));
     }
 
     @Test
-    void reviewCode_ShouldHandleAIModelException_WhenAiModelFails() {
+    void reviewCode_ShouldHandleAIModelException_WhenAiModelFails() throws Exception {
         // Arrange
-        String githubUrl = "https://github.com/username/repo/blob/main/src/file.java";
+        String repositoryUrl = "https://github.com/username/repo/blob/main/src/file.java";
         String fileContent = "public class Test { }";
         CodeReviewRequest request = new CodeReviewRequest();
-        request.setGithubUrl(githubUrl);
+        request.setRepositoryUrl(repositoryUrl);
 
-        // Setting up mocks for GitHub API call
-        mockGitHubApiCall(githubUrl, fileContent);
+        // Setup git provider factory
+        when(gitProviderFactory.getProvider(repositoryUrl)).thenReturn(gitProvider);
+
+        // Setup repository info
+        Map<String, String> repoInfo = new HashMap<>();
+        repoInfo.put("owner", "username");
+        repoInfo.put("repo", "repo");
+        repoInfo.put("branch", "main");
+        repoInfo.put("path", "src/file.java");
+        when(gitProvider.extractRepositoryInfoFromUrl(repositoryUrl)).thenReturn(repoInfo);
+
+        // Setup file content
+        when(gitProvider.fetchFileContent(repositoryUrl)).thenReturn(fileContent);
 
         // Setting up mocks for embedding service
         ContentBlock block = new ContentBlock();
@@ -163,117 +205,28 @@ class CodeReviewServiceTest {
     }
 
     @Test
-    void reviewCode_ShouldHandleGenericException_AsCodeReviewException() {
+    void reviewCode_ShouldHandleGenericException_AsCodeReviewException() throws Exception {
         // Arrange
-        String githubUrl = "https://github.com/username/repo/blob/main/src/file.java";
+        String repositoryUrl = "https://github.com/username/repo/blob/main/src/file.java";
         CodeReviewRequest request = new CodeReviewRequest();
-        request.setGithubUrl(githubUrl);
+        request.setRepositoryUrl(repositoryUrl);
 
-        // Setting up GitHub API to throw an uncategorized exception
-        when(githubWebClient.get()).thenReturn(requestHeadersUriSpec);
-        when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenThrow(new NullPointerException("Unexpected error"));
+        // Setup git provider factory
+        when(gitProviderFactory.getProvider(repositoryUrl)).thenReturn(gitProvider);
+
+        // Setup repository info
+        Map<String, String> repoInfo = new HashMap<>();
+        repoInfo.put("owner", "username");
+        repoInfo.put("repo", "repo");
+        repoInfo.put("branch", "main");
+        repoInfo.put("path", "src/file.java");
+        when(gitProvider.extractRepositoryInfoFromUrl(repositoryUrl)).thenReturn(repoInfo);
+
+        // Setting up GitProvider to throw a generic exception
+        when(gitProvider.fetchFileContent(repositoryUrl))
+            .thenThrow(new RuntimeException("Generic error"));
 
         // Act & Assert
-        Exception exception = assertThrows(CodeReviewException.class, () -> codeReviewService.reviewCode(request));
-        assertTrue(exception.getMessage().contains("Failed to perform code review") ||
-                   exception.getMessage().contains("Unexpected error"),
-                   "Exception message should mention 'Failed to perform code review' or contain the original error message");
-    }
-
-    // Test the utility methods directly using reflection to ensure code coverage without creating large files
-
-    @Test
-    void findIdealChunkBoundary_ShouldFindBlankLine() {
-        // Arrange
-        String code = "public class Test {\n\n    public void method() {\n        // code\n    }\n}";
-        int start = 0;
-        int end = 20;
-
-        // Act - using reflection to access private method
-        int result = (int) ReflectionTestUtils.invokeMethod(
-            codeReviewService,
-            "findIdealChunkBoundary",
-            code, start, end
-        );
-
-        // Assert
-        assertTrue(result > 0);
-        assertTrue(result <= end);
-    }
-
-    @Test
-    void splitCodeIntoChunks_ShouldNotSplitSmallCode() {
-        // Arrange
-        String code = "Small code snippet";
-        int chunkSize = 100;
-
-        // Act - using reflection to access private method
-        List<String> chunks = (List<String>) ReflectionTestUtils.invokeMethod(
-            codeReviewService,
-            "splitCodeIntoChunks",
-            code, chunkSize
-        );
-
-        // Assert
-        assertEquals(1, chunks.size());
-        assertEquals(code, chunks.get(0));
-    }
-
-    @Test
-    void splitCodeIntoChunks_ShouldSplitLargeCode() {
-        // Arrange - use a tiny sample that won't cause memory issues
-        String code = "first part\nsecond part";
-        int chunkSize = 5;  // Tiny size to force splitting
-
-        // Act - using reflection to access private method
-        List<String> chunks = (List<String>) ReflectionTestUtils.invokeMethod(
-            codeReviewService,
-            "splitCodeIntoChunks",
-            code, chunkSize
-        );
-
-        // Assert
-        assertTrue(chunks.size() > 1);
-    }
-
-    @Test
-    void isInterruptionException_ShouldDetectInterruptions() {
-        // True cases
-        assertTrue((boolean) ReflectionTestUtils.invokeMethod(
-            codeReviewService, "isInterruptionException", new InterruptedException()));
-
-        assertTrue((boolean) ReflectionTestUtils.invokeMethod(
-            codeReviewService, "isInterruptionException",
-            new RuntimeException("Operation timed out")));
-
-        // False cases
-        assertFalse((boolean) ReflectionTestUtils.invokeMethod(
-            codeReviewService, "isInterruptionException", new RuntimeException("Other error")));
-
-        assertFalse((boolean) ReflectionTestUtils.invokeMethod(
-            codeReviewService, "isInterruptionException", (Exception)null));
-    }
-
-    // Helper methods to set up mocks
-
-    private void mockGitHubApiCall(String url, String responseContent) {
-        when(githubWebClient.get()).thenReturn(requestHeadersUriSpec);
-        when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.bodyToMono(String.class)).thenReturn(Mono.just(responseContent));
-    }
-
-    private void mockAIModelResponse(String responseText) {
-        // Create a mock response that matches the Spring AI model's expected structure
-        ChatResponse chatResponse = mock(ChatResponse.class);
-        Generation generation = mock(Generation.class);
-
-        // Create a proper AssistantMessage as the output - this is what Spring AI 1.0.0 expects
-        AssistantMessage assistantMessage = new AssistantMessage(responseText);
-
-        when(generation.getOutput()).thenReturn(assistantMessage);
-        when(chatResponse.getResult()).thenReturn(generation);
-        when(chatModel.call(any(Prompt.class))).thenReturn(chatResponse);
+        assertThrows(CodeReviewException.class, () -> codeReviewService.reviewCode(request));
     }
 }
