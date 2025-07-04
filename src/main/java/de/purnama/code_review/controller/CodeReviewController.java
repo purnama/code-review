@@ -1,5 +1,6 @@
 package de.purnama.code_review.controller;
 
+import de.purnama.code_review.exception.GitProviderException;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,7 +41,7 @@ public class CodeReviewController {
     @PostMapping
     public String performReview(
             @ModelAttribute("reviewRequest") CodeReviewRequest request,
-            Model model) throws CodeReviewException {
+            Model model) throws CodeReviewException, GitProviderException {
 
         log.info("Received code review request: {}", request);
 

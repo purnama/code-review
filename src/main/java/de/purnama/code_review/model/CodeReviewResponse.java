@@ -9,7 +9,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 
  * Model representing the result of an automated code review,
  * containing both markdown and HTML formatted review content.
  * 
@@ -24,5 +23,5 @@ public class CodeReviewResponse {
     private String htmlReview;      // HTML converted content 
     private List<String> guidelines;
     private LocalDateTime timestamp;
-    private String githubUrl;
+    private String repositoryUrl;
 }

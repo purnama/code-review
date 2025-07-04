@@ -6,10 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 
  * Model representing a request for automated code review,
- * containing GitHub URL as input.
- * 
+ * containing repository URL as input.
+ *
  * @author Arthur Purnama (arthur@purnama.de)
  */
 @Data
@@ -17,5 +16,5 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CodeReviewRequest {
-    private String githubUrl;
+    private String repositoryUrl;
 }

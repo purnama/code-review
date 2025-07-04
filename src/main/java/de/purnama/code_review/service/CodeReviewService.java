@@ -8,37 +8,34 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import de.purnama.code_review.model.git.GitFile;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.purnama.code_review.config.GitHubConfig;
 import de.purnama.code_review.config.OpenAIConfig;
 import de.purnama.code_review.exception.AIModelException;
 import de.purnama.code_review.exception.CodeReviewException;
-import de.purnama.code_review.exception.GitHubException;
+import de.purnama.code_review.exception.GitProviderException;
 import de.purnama.code_review.exception.InvalidCodeReviewRequestException;
 import de.purnama.code_review.exception.RequestInterruptedException;
 import de.purnama.code_review.model.CodeReviewRequest;
 import de.purnama.code_review.model.CodeReviewResponse;
 import de.purnama.code_review.model.ContentBlock;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import de.purnama.code_review.service.git.GitProvider;
+import de.purnama.code_review.service.git.GitProviderFactory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * CodeReviewService
- * 
+ * <p>
  * Service responsible for generating automated code reviews using AI models
- * and integrating with GitHub repositories.
- * 
+ * and integrating with Git repository providers.
+ *
  * @author Arthur Purnama (arthur@purnama.de)
  */
 @Slf4j
@@ -47,13 +44,12 @@ import lombok.extern.slf4j.Slf4j;
 public class CodeReviewService {
 
     private final EmbeddingService embeddingService;
-    private final ChatModel chatModel;
-    private final GitHubConfig githubConfig;
+    public final ChatModel chatModel;
     private final OpenAIConfig openAIConfig;
-    private final WebClient githubWebClient;
     private final MarkdownConverter markdownConverter;
+    private final GitProviderFactory gitProviderFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    
+
     // Configurable timeout for reactive operations
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -75,7 +71,7 @@ public class CodeReviewService {
             4. Security issues
             5. Alignment with best practices and our guidelines
             
-            GitHub URL: %s
+            Repository URL: %s
             
             Relevant guidelines from our team's standards:
             %s
@@ -107,32 +103,36 @@ public class CodeReviewService {
      * Processes a code review and returns the results to the client
      * Uses server-side markdown to HTML conversion
      */
-    public CodeReviewResponse reviewCode(CodeReviewRequest request) throws CodeReviewException {
+    public CodeReviewResponse reviewCode(CodeReviewRequest request) throws CodeReviewException, GitProviderException {
         try {
-            String githubUrl = request.getGithubUrl();
-            log.info("Starting code review for GitHub URL: {}", githubUrl);
+            // Use the generic repositoryUrl getter
+            String repositoryUrl = request.getRepositoryUrl();
+            log.info("Starting code review for repository URL: {}", repositoryUrl);
 
-            // Extract owner and repo from GitHub URL
-            Map<String, String> repoInfo = extractRepoInfoFromUrl(githubUrl);
+            // Get the appropriate Git provider for this URL
+            GitProvider gitProvider = gitProviderFactory.getProvider(repositoryUrl);
+
+            // Extract owner and repo using the Git provider
+            Map<String, String> repoInfo = gitProvider.extractRepositoryInfoFromUrl(repositoryUrl);
             String owner = repoInfo.get("owner");
             String repo = repoInfo.get("repo");
             String branch = repoInfo.get("branch");
 
             if (owner == null || repo == null) {
-                throw new InvalidCodeReviewRequestException("Could not extract repository information from URL. Please provide a valid GitHub repository URL.");
+                throw new InvalidCodeReviewRequestException("Could not extract repository information from URL. Please provide a valid repository URL.");
             }
 
             // Check if URL points to a specific file or the whole repository
             if (repoInfo.get("path") != null && !repoInfo.get("path").isEmpty()) {
                 // Single file review
-                return reviewSingleFile(githubUrl);
+                return reviewSingleFile(repositoryUrl);
             } else {
                 // Project review
-                return reviewProject(owner, repo, branch, githubUrl);
+                return reviewProject(owner, repo, branch, repositoryUrl);
             }
 
-        } catch (GitHubException e) {
-            // GitHub specific exceptions are already properly typed, just rethrow
+        } catch (GitProviderException e) {
+            // Git provider specific exceptions are already properly typed, just rethrow
             throw e;
         } catch (AIModelException e) {
             // AI model exceptions are already properly typed, just rethrow
@@ -147,12 +147,13 @@ public class CodeReviewService {
     }
 
     /**
-     * Reviews a single file from GitHub
+     * Reviews a single file from a Git repository
      */
-    private CodeReviewResponse reviewSingleFile(String githubUrl) throws CodeReviewException, AIModelException {
+    private CodeReviewResponse reviewSingleFile(String repositoryUrl) throws CodeReviewException, AIModelException, GitProviderException {
         try {
-            // Fetch code content from GitHub URL
-            String codeContent = fetchCodeFromGitHub(githubUrl);
+            // Fetch code content from Git provider
+            GitProvider gitProvider = gitProviderFactory.getProvider(repositoryUrl);
+            String codeContent = gitProvider.fetchFileContent(repositoryUrl);
 
             // Find relevant guidelines using embeddings-based similarity search
             List<ContentBlock> relevantBlocks = embeddingService.findSimilarContent(codeContent, openAIConfig.getContentBlocksLimit());
@@ -170,15 +171,15 @@ public class CodeReviewService {
             // Check if the file is large and needs chunking
             int chunkSize = openAIConfig.getFileChunkSize();
             if (codeContent.length() > chunkSize) {
-                log.info("Large file detected (size: {}), processing in chunks of {} characters", 
+                log.info("Large file detected (size: {}), processing in chunks of {} characters",
                         codeContent.length(), chunkSize);
-                return processLargeFileInChunks(githubUrl, codeContent, formattedGuidelines, relevantGuidelines);
+                return processLargeFileInChunks(repositoryUrl, codeContent, formattedGuidelines, relevantGuidelines);
             }
 
             // Create prompt with the code and relevant guidelines
             String promptContent = String.format(
                     REVIEW_PROMPT_TEMPLATE,
-                    githubUrl,
+                    repositoryUrl,
                     formattedGuidelines,
                     codeContent
             );
@@ -189,25 +190,25 @@ public class CodeReviewService {
                 Prompt prompt = new Prompt(userMessage);
                 ChatResponse response = chatModel.call(prompt);
                 String review = response.getResult().getOutput().getText();
-    
+
                 // Convert markdown to HTML
                 String htmlReview = markdownConverter.convertMarkdownToHtml(review);
-    
+
                 // Build and return the response
                 return CodeReviewResponse.builder()
                         .review(review)
                         .htmlReview(htmlReview)
                         .guidelines(relevantGuidelines)
                         .timestamp(LocalDateTime.now())
-                        .githubUrl(githubUrl)
+                        .repositoryUrl(repositoryUrl)
                         .build();
             } catch (Exception e) {
                 log.error("Error calling AI model: {}", e.getMessage(), e);
                 throw new AIModelException("Failed to generate code review: " + e.getMessage(), e);
             }
 
-        } catch (GitHubException e) {
-            // Rethrow GitHub exceptions
+        } catch (GitProviderException e) {
+            // Rethrow Git provider exceptions
             throw e;
         } catch (AIModelException e) {
             // Rethrow AI model exceptions
@@ -227,101 +228,91 @@ public class CodeReviewService {
      * Memory-optimized implementation that handles each chunk separately
      *
      * @throws CodeReviewException If an error occurs during processing
-     * @throws AIModelException If the AI model fails to generate a review
+     * @throws AIModelException    If the AI model fails to generate a review
      */
-    private CodeReviewResponse processLargeFileInChunks(String githubUrl, String codeContent, 
-                                                      String formattedGuidelines, List<String> relevantGuidelines)
-                                                      throws CodeReviewException, AIModelException {
-        log.info("Processing large file in chunks: {}", githubUrl);
-        
+    private CodeReviewResponse processLargeFileInChunks(String repositoryUrl, String codeContent,
+                                                        String formattedGuidelines, List<String> relevantGuidelines)
+            throws CodeReviewException, AIModelException {
+        log.info("Processing large file in chunks: {}", repositoryUrl);
+
         // In test mode, we limit the processing to avoid memory issues
         if (testMode) {
             log.info("Running in test mode - using simplified processing for large file");
-            return createSimplifiedReviewForTest(githubUrl, formattedGuidelines, relevantGuidelines);
+            return createSimplifiedReviewForTest(repositoryUrl, formattedGuidelines, relevantGuidelines);
         }
 
         int chunkSize = openAIConfig.getFileChunkSize();
 
-        try {
-            // Calculate number of chunks without keeping all chunks in memory at once
-            int totalChunks = calculateTotalChunks(codeContent, chunkSize);
-            log.info("Estimated {} chunks needed for file", totalChunks);
 
-            // Use a pre-sized StringBuilder to minimize reallocations - use absolute value to avoid negative size
-            int initialCapacity = Math.min(Math.abs(totalChunks) * 1000, 100000);
-            StringBuilder finalReview = new StringBuilder(initialCapacity > 0 ? initialCapacity : 10000);
-            finalReview.append("# Code Review Summary\n\n");
-            finalReview.append("This is a review of a large file that was processed in " + totalChunks + " chunks.\n\n");
+        // Calculate number of chunks without keeping all chunks in memory at once
+        int totalChunks = calculateTotalChunks(codeContent, chunkSize);
+        log.info("Estimated {} chunks needed for file", totalChunks);
 
-            // Process the file in chunks directly instead of keeping all chunks in memory
-            int currentChunk = 1;
-            int start = 0;
+        // Use a pre-sized StringBuilder to minimize reallocations - use absolute value to avoid negative size
+        int initialCapacity = Math.min(Math.abs(totalChunks) * 1000, 100000);
+        StringBuilder finalReview = new StringBuilder(initialCapacity > 0 ? initialCapacity : 10000);
+        finalReview.append("# Code Review Summary\n\n");
+        finalReview.append("This is a review of a large file that was processed in " + totalChunks + " chunks.\n\n");
 
-            while (start < codeContent.length()) {
-                // Extract single chunk
-                int end = calculateChunkEndPosition(codeContent, start, chunkSize);
-                String chunk = codeContent.substring(start, end);
+        // Process the file in chunks directly instead of keeping all chunks in memory
+        int currentChunk = 1;
+        int start = 0;
 
-                try {
-                    // Process this single chunk
-                    String chunkReview = processIndividualChunk(githubUrl, chunk, formattedGuidelines, currentChunk, totalChunks);
+        while (start < codeContent.length()) {
+            // Extract single chunk
+            int end = calculateChunkEndPosition(codeContent, start, chunkSize);
+            String chunk = codeContent.substring(start, end);
 
-                    // Add chunk header and review
-                    finalReview.append("## Chunk ").append(currentChunk).append(" of ").append(totalChunks).append("\n\n");
-                    finalReview.append(chunkReview).append("\n\n");
+            try {
+                // Process this single chunk
+                String chunkReview = processIndividualChunk(repositoryUrl, chunk, formattedGuidelines, currentChunk, totalChunks);
 
-                } catch (AIModelException e) {
-                    // Propagate AI model exceptions
-                    throw e;
-                } catch (Exception e) {
-                    log.error("Error processing chunk {}/{}: {}", currentChunk, totalChunks, e.getMessage(), e);
-                    finalReview.append("## Chunk ").append(currentChunk).append(" of ").append(totalChunks).append("\n\n");
-                    finalReview.append("Error reviewing this chunk: ").append(e.getMessage()).append("\n\n");
-                }
+                // Add chunk header and review
+                finalReview.append("## Chunk ").append(currentChunk).append(" of ").append(totalChunks).append("\n\n");
+                finalReview.append(chunkReview).append("\n\n");
 
-                // Move to next chunk
-                start = end;
-                currentChunk++;
-
-                // Release memory and suggest garbage collection periodically
-                chunk = null;
-                if (currentChunk % 2 == 0) {
-                    System.gc();
-                }
+            } catch (RequestInterruptedException e) {
+                // Log and continue with next chunk - this is a known condition we can handle
+                log.warn("Chunk processing was interrupted {}/{}: {}", currentChunk, totalChunks, e.getMessage());
+                finalReview.append("## Chunk ").append(currentChunk).append(" of ").append(totalChunks).append("\n\n");
+                finalReview.append("Processing of this chunk was interrupted: ").append(e.getMessage()).append("\n\n");
             }
 
-            // Release reference to the full codeContent to help GC
-            codeContent = null;
-            System.gc();
+            // Move to next chunk
+            start = end;
+            currentChunk++;
 
-            // After processing all chunks, add a final summary section
-            finalReview.append("# Final Summary\n\n");
-            finalReview.append("This review was generated by processing a large file in chunks. ");
-            finalReview.append("Please review the individual chunk analyses above for specific issues and recommendations.\n\n");
-
-            String review = finalReview.toString();
-
-            // Release StringBuilder to help GC
-            finalReview = null;
-
-            // Convert markdown to HTML
-            String htmlReview = markdownConverter.convertMarkdownToHtml(review);
-
-            return CodeReviewResponse.builder()
-                    .review(review)
-                    .htmlReview(htmlReview)
-                    .guidelines(relevantGuidelines)
-                    .timestamp(LocalDateTime.now())
-                    .githubUrl(githubUrl)
-                    .build();
-
-        } catch (AIModelException e) {
-            // Propagate AI model exceptions directly
-            throw e;
-        } catch (Exception e) {
-            log.error("Error during large file processing: {}", e.getMessage(), e);
-            throw new CodeReviewException("Failed to process large file: " + e.getMessage(), e);
+            // Release memory and suggest garbage collection periodically
+            chunk = null;
+            if (currentChunk % 2 == 0) {
+                System.gc();
+            }
         }
+
+        // Release reference to the full codeContent to help GC
+        codeContent = null;
+        System.gc();
+
+        // After processing all chunks, add a final summary section
+        finalReview.append("# Final Summary\n\n");
+        finalReview.append("This review was generated by processing a large file in chunks. ");
+        finalReview.append("Please review the individual chunk analyses above for specific issues and recommendations.\n\n");
+
+        String review = finalReview.toString();
+
+        // Release StringBuilder to help GC
+        finalReview = null;
+
+        // Convert markdown to HTML
+        String htmlReview = markdownConverter.convertMarkdownToHtml(review);
+
+        return CodeReviewResponse.builder()
+                .review(review)
+                .htmlReview(htmlReview)
+                .guidelines(relevantGuidelines)
+                .timestamp(LocalDateTime.now())
+                .repositoryUrl(repositoryUrl)
+                .build();
     }
 
     /**
@@ -355,11 +346,11 @@ public class CodeReviewService {
     /**
      * Creates a simplified review response for use in test mode
      */
-    private CodeReviewResponse createSimplifiedReviewForTest(String githubUrl, String formattedGuidelines, List<String> relevantGuidelines) {
+    private CodeReviewResponse createSimplifiedReviewForTest(String repositoryUrl, String formattedGuidelines, List<String> relevantGuidelines) {
         String testReview = "# Test Mode Review\n\n" +
                 "This review was generated in test mode with reduced memory usage.\n\n" +
                 "In a production environment, the file would be split into chunks and each chunk would be reviewed separately.\n\n" +
-                "GitHub URL: " + githubUrl;
+                "Repository URL: " + repositoryUrl;
 
         String htmlReview = markdownConverter.convertMarkdownToHtml(testReview);
 
@@ -368,7 +359,7 @@ public class CodeReviewService {
                 .htmlReview(htmlReview)
                 .guidelines(relevantGuidelines)
                 .timestamp(LocalDateTime.now())
-                .githubUrl(githubUrl)
+                .repositoryUrl(repositoryUrl)
                 .build();
     }
 
@@ -376,23 +367,23 @@ public class CodeReviewService {
      * Process an individual chunk of a large file
      * Extracted to a separate method to make unit testing easier and reduce memory pressure
      *
-     * @param githubUrl The GitHub URL of the file being reviewed
-     * @param chunk The code chunk to review
+     * @param repositoryUrl       The repository URL of the file being reviewed
+     * @param chunk               The code chunk to review
      * @param formattedGuidelines The relevant guidelines for the review
-     * @param chunkNumber Current chunk number
-     * @param totalChunks Total number of chunks
+     * @param chunkNumber         Current chunk number
+     * @param totalChunks         Total number of chunks
      * @return The review text for this chunk
-     * @throws AIModelException If the AI model fails to generate a review
+     * @throws AIModelException            If the AI model fails to generate a review
      * @throws RequestInterruptedException If the request is interrupted during processing
      */
-    protected String processIndividualChunk(String githubUrl, String chunk, String formattedGuidelines,
-                                           int chunkNumber, int totalChunks) throws AIModelException, RequestInterruptedException {
+    protected String processIndividualChunk(String repositoryUrl, String chunk, String formattedGuidelines,
+                                            int chunkNumber, int totalChunks) throws AIModelException, RequestInterruptedException {
         log.info("Processing chunk {} of {}, size: {} characters", chunkNumber, totalChunks, chunk.length());
 
         // Create a prompt for this chunk
         String chunkPrompt = String.format(
                 REVIEW_PROMPT_TEMPLATE,
-                githubUrl + " (Chunk " + chunkNumber + " of " + totalChunks + ")",
+                repositoryUrl + " (Chunk " + chunkNumber + " of " + totalChunks + ")",
                 formattedGuidelines,
                 chunk
         );
@@ -431,7 +422,7 @@ public class CodeReviewService {
         if (response == null) {
             return "Failed to review this chunk after multiple attempts.";
         }
-        
+
         // Return the chunk review text
         return response.getResult().getOutput().getText();
     }
@@ -442,36 +433,36 @@ public class CodeReviewService {
      */
     private List<String> splitCodeIntoChunks(String codeContent, int chunkSize) {
         List<String> chunks = new ArrayList<>();
-        
+
         // If code is small enough, return as single chunk
         if (codeContent.length() <= chunkSize) {
             chunks.add(codeContent);
             return chunks;
         }
-        
+
         int start = 0;
         while (start < codeContent.length()) {
             int end = Math.min(start + chunkSize, codeContent.length());
-            
+
             // If we're not at the end of the file, try to find a good split point
             if (end < codeContent.length()) {
                 // Look for a blank line or end of method/class within the acceptable range
                 int idealEnd = findIdealChunkBoundary(codeContent, start, end);
-                
+
                 // If we found a good boundary, use it
                 if (idealEnd > start) {
                     end = idealEnd;
                 }
             }
-            
+
             // Add the chunk, using substring efficiently
             chunks.add(codeContent.substring(start, end));
             start = end;
         }
-        
+
         return chunks;
     }
-    
+
     /**
      * Find an ideal chunk boundary (blank line, method end, etc.) near the end point
      */
@@ -498,7 +489,7 @@ public class CodeReviewService {
             }
             // Check for a closing brace followed by a newline
             if (i > 0 && i < code.length() - 1 &&
-                code.charAt(i) == '}' && code.charAt(i+1) == '\n') {
+                    code.charAt(i) == '}' && code.charAt(i + 1) == '\n') {
                 bestPosition = i + 2;
                 if (bestPosition > code.length()) bestPosition = code.length();
                 if (bestPosition > start && bestPosition <= approximateEnd) {
@@ -509,11 +500,11 @@ public class CodeReviewService {
         // Fallback: return approximateEnd if no better boundary found
         return approximateEnd;
     }
-    
+
     /**
      * Check if an exception is related to a network interruption or timeout
      */
-    private boolean isInterruptionException(Throwable e) {
+    boolean isInterruptionException(Throwable e) {
         if (e == null) return false;
 
         // Check if it's directly an InterruptedException
@@ -530,7 +521,7 @@ public class CodeReviewService {
         // Check cause recursively
         return isInterruptionException(e.getCause());
     }
-    
+
     /**
      * Check if an exception is related to a network interruption or timeout
      * and convert it to our custom exception type if needed
@@ -558,45 +549,22 @@ public class CodeReviewService {
     }
 
     /**
-     * Reviews a whole project from GitHub
+     * Reviews a whole project from a Git repository
      */
-    private CodeReviewResponse reviewProject(String owner, String repo, String branch, String githubUrl) throws CodeReviewException {
+    private CodeReviewResponse reviewProject(String owner, String repo, String branch, String repositoryUrl) throws CodeReviewException {
         try {
             log.info("Starting project review for {}/{} on branch {}", owner, repo, branch);
 
-            // Fetch important files from the repository
-            List<GitHubFile> filesToReview = fetchRepositoryContents(owner, repo, branch);
+            // Fetch and prepare repository files for review
+            GitProvider gitProvider = gitProviderFactory.getProvider(repositoryUrl);
 
-            log.info("Found {} items in repository contents", filesToReview.size());
+            // Use the fetchRepositoryFiles method from the GitProvider interface
+            List<GitFile> filesToReview = gitProvider.fetchRepositoryFiles(
+                owner, repo, branch, openAIConfig.getMaxFilesToReview());
 
-            if (filesToReview.isEmpty()) {
-                // Instead of throwing an exception, return a response with an informative message
-                // and initialize guidelines as an empty list to avoid null pointer in the template
-                log.info("No suitable files found for review in the repository.");
-                String noFilesMessage = "No suitable files were found for review in the repository. This may be because:\n" +
-                        "1. The repository is empty or contains no supported file types\n" +
-                        "2. All code files are in ignored directories\n" +
-                        "3. There was an issue accessing the files from GitHub\n\n" +
-                        "Please check that your repository contains code files with supported extensions and try again.";
-                
-                // Convert markdown to HTML
-                String htmlMessage = markdownConverter.convertMarkdownToHtml(noFilesMessage);
-                
-                return CodeReviewResponse.builder()
-                        .review(noFilesMessage)
-                        .htmlReview(htmlMessage)
-                        .guidelines(new ArrayList<>()) // Initialize with empty list instead of null
-                        .timestamp(LocalDateTime.now())
-                        .githubUrl(githubUrl)
-                        .build();
-            }
-
-            // Apply max files limit
-            int maxFiles = openAIConfig.getMaxFilesToReview();
-            if (filesToReview.size() > maxFiles) {
-                log.info("Limiting review to {} files as per configuration (total files: {})",
-                        maxFiles, filesToReview.size());
-                filesToReview = filesToReview.subList(0, maxFiles);
+            // If no files to review, return early with informative message
+            if (filesToReview == null || filesToReview.isEmpty()) {
+                return createEmptyReviewResponse(repositoryUrl);
             }
 
             // Find relevant guidelines using embeddings-based similarity search from combined code content
@@ -625,91 +593,28 @@ public class CodeReviewService {
             finalReview.append("The following files were reviewed:\n\n");
 
             for (int i = 0; i < filesToReview.size(); i++) {
-                GitHubFile file = filesToReview.get(i);
+                GitFile file = filesToReview.get(i);
                 log.info("Reviewing file {} of {}: {}", (i + 1), filesToReview.size(), file.getPath());
 
-                // Create single file review prompt
-                String singleFilePrompt = String.format(
-                        REVIEW_PROMPT_TEMPLATE,
-                        githubUrl,
-                        formattedGuidelines,
-                        file.getContent()
-                );
-
-                // Generate code review for this single file
-                UserMessage userMessage = new UserMessage(singleFilePrompt);
-                Prompt prompt = new Prompt(userMessage);
-
-                // Add review header for this file
-                finalReview.append("## File: ").append(file.getPath()).append("\n\n");
-
-                try {
-                    // Add retry logic for handling interruptions
-                    int maxRetries = 3;
-                    int currentAttempt = 0;
-                    ChatResponse response = null;
-
-                    while (currentAttempt < maxRetries) {
-                        try {
-                            currentAttempt++;
-                            log.info("Attempt {} of {} to call AI model for file: {}",
-                                    currentAttempt, maxRetries, file.getPath());
-                            response = chatModel.call(prompt);
-                            // If successful, break out of the retry loop
-                            break;
-                        } catch (Exception e) {
-                            // Check if it's an interruption-related exception
-                            if (isInterruptionException(e) && currentAttempt < maxRetries) {
-                                log.warn("AI model call was interrupted. Will retry ({}/{})", currentAttempt, maxRetries);
-                                // Wait before retrying (exponential backoff)
-                                try {
-                                    Thread.sleep(1000 * currentAttempt);
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    throw new RequestInterruptedException("Thread interrupted during retry wait", ie);
-                                }
-                            } else {
-                                // Either not an interruption or we've exhausted retries
-                                throw new AIModelException("Failed to generate code review after multiple retries", e);
-                            }
-                        }
-                    }
-
-                    // If we got through the retries with no success
-                    if (response == null) {
-                        finalReview.append("Failed to review this file after multiple attempts. Skipping to next file.\n\n");
-                        continue;
-                    }
-
-                    // Add the file review to the final review
-                    String fileReview = response.getResult().getOutput().getText();
-                    finalReview.append(fileReview).append("\n\n");
-
-                } catch (Exception e) {
-                    log.error("Error reviewing file {}: {}", file.getPath(), e.getMessage(), e);
-                    finalReview.append("Error reviewing this file: ").append(e.getMessage()).append("\n\n");
-                    // Continue with next file instead of failing the entire review
-                }
+                // Process this file and add its review to the final review
+                processRepositoryFile(file, repositoryUrl, formattedGuidelines, finalReview);
             }
 
             // Build and return the response with the combined reviews
             log.info("Building final response object with reviews from {} files", filesToReview.size());
             String review = finalReview.toString();
-            
+
             // Convert markdown to HTML
             String htmlReview = markdownConverter.convertMarkdownToHtml(review);
-            
+
             return CodeReviewResponse.builder()
                     .review(review)
                     .htmlReview(htmlReview)
                     .guidelines(relevantGuidelines)
                     .timestamp(LocalDateTime.now())
-                    .githubUrl(githubUrl)
+                    .repositoryUrl(repositoryUrl)
                     .build();
 
-        } catch (CodeReviewException e) {
-            // Rethrow our custom exceptions
-            throw e;
         } catch (Exception e) {
             log.error("Error performing project review: {}", e.getMessage(), e);
             throw new CodeReviewException("Failed to perform project review: " + e.getMessage(), e);
@@ -717,282 +622,116 @@ public class CodeReviewService {
     }
 
     /**
-     * Fetches code content from a specific GitHub file URL
+     * Processes a single file from the repository and appends its review to the final review output
+     *
+     * @param file The file to review
+     * @param repositoryUrl The repository URL for the repository
+     * @param formattedGuidelines The formatted coding guidelines for the review
+     * @param finalReview The StringBuilder to append the review to
      */
-    private String fetchCodeFromGitHub(String githubUrl) throws GitHubException {
-        log.info("Fetching code from GitHub URL: {}", githubUrl);
+    protected void processRepositoryFile(GitFile file, String repositoryUrl, String formattedGuidelines, StringBuilder finalReview) {
+        // Add review header for this file
+        finalReview.append("## File: ").append(file.getPath()).append("\n\n");
 
-        try {
-            // Convert GitHub web URL to raw content URL
-            String rawUrl = convertToRawGitHubUrl(githubUrl);
-
-            // Fetch the raw content
-            String codeContent = githubWebClient.get()
-                    .uri(rawUrl)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(REQUEST_TIMEOUT)
-                    .block();
-
-            if (codeContent == null || codeContent.isBlank()) {
-                throw new GitHubException("Could not fetch code content from GitHub");
-            }
-
-            return codeContent;
-        } catch (GitHubException e) {
-            // Rethrow our custom exception
-            throw e;
-        } catch (Exception e) {
-            log.error("Error fetching code from GitHub: {}", e.getMessage(), e);
-            throw new GitHubException("Failed to fetch code from GitHub: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Extracts owner, repo, branch and path from GitHub URL
-     */
-    private Map<String, String> extractRepoInfoFromUrl(String githubUrl) {
-        Map<String, String> result = new HashMap<>();
-
-        // Handle repository URLs
-        if (githubUrl.contains("github.com")) {
-            // Remove protocol and domain
-            String path = githubUrl.replaceAll("https?://github.com/", "");
-
-            // Split path components
-            String[] parts = path.split("/");
-
-            if (parts.length >= 2) {
-                result.put("owner", parts[0]);
-                result.put("repo", parts[1]);
-
-                // Default branch is main, but could be overridden if specified in URL
-                result.put("branch", parts.length > 2 && parts[2].equals("tree") ? parts[3] : "main");
-
-                // Check if URL points to a specific file
-                if (parts.length > 3 && parts[2].equals("blob")) {
-                    StringBuilder filePath = new StringBuilder();
-                    for (int i = 4; i < parts.length; i++) {
-                        filePath.append(parts[i]);
-                        if (i < parts.length - 1) {
-                            filePath.append("/");
-                        }
-                    }
-                    result.put("path", filePath.toString());
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Converts a regular GitHub URL to a raw content URL
-     */
-    private String convertToRawGitHubUrl(String githubUrl) throws InvalidCodeReviewRequestException {
-        // Replace "github.com" with "raw.githubusercontent.com"
-        // Replace "/blob/" with "/"
-
-        if (githubUrl.contains("github.com") && githubUrl.contains("/blob/")) {
-            return githubUrl.replace("github.com", "raw.githubusercontent.com")
-                    .replace("/blob/", "/");
-        } else {
-            throw new InvalidCodeReviewRequestException("Invalid GitHub URL format. Please provide a URL to a specific file.");
-        }
-    }
-
-    /**
-     * Fetches repository contents from GitHub API
-     */
-    private List<GitHubFile> fetchRepositoryContents(String owner, String repo, String branch) throws GitHubException {
-        try {
-            log.info("Fetching repository contents for {}/{} on branch {}", owner, repo, branch);
-
-            // Fetch important files from the repository
-            List<GitHubFile> filesToReview = new ArrayList<>();
-            int maxFilesToReview = openAIConfig.getMaxFilesToReview();
-
-            // First fetch the root contents
-            String rootUrl = String.format("https://api.github.com/repos/%s/%s/contents", owner, repo);
-            if (branch != null && !branch.isEmpty()) {
-                rootUrl += "?ref=" + branch;
-            }
-
-            log.info("Fetching root contents from URL: {}", rootUrl);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Accept", "application/vnd.github.v3+json");
-            if (githubConfig.getToken() != null && !githubConfig.getToken().isEmpty()) {
-                headers.set("Authorization", "token " + githubConfig.getToken());
-            }
-
-            // Now recursively fetch files worth reviewing directly
-            recursivelyFetchContentsForReview(rootUrl, headers, filesToReview, maxFilesToReview);
-
-            log.info("Total files collected for review: {}", filesToReview.size());
-            return filesToReview;
-
-        } catch (Exception e) {
-            log.error("Error fetching repository contents: {}", e.getMessage(), e);
-            throw new GitHubException("Failed to fetch repository contents: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Recursively fetches contents from GitHub API, filtering and collecting only files worth reviewing
-     * 
-     * @param url The GitHub API URL to fetch contents from
-     * @param headers HTTP headers for the request
-     * @param filesToReview List to store files worth reviewing
-     * @param maxFilesToReview Maximum number of files to collect for review
-     */
-    private void recursivelyFetchContentsForReview(String url, HttpHeaders headers, 
-                                        List<GitHubFile> filesToReview, int maxFilesToReview) {
-        // If we've reached the maximum files to review, stop collecting
-        if (filesToReview.size() >= maxFilesToReview) {
-            log.info("Reached maximum number of files to review ({})", maxFilesToReview);
-            return;
-        }
-        
-        try {
-            // Use WebClient to fetch contents
-            String responseBody = githubWebClient.get()
-                .uri(url)
-                .headers(httpHeaders -> {
-                    if (headers.containsKey("Accept")) {
-                        httpHeaders.add("Accept", headers.getFirst("Accept"));
-                    }
-                    if (headers.containsKey("Authorization")) {
-                        httpHeaders.add("Authorization", headers.getFirst("Authorization"));
-                    }
-                })
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(REQUEST_TIMEOUT)
-                .block();
-            
-            if (responseBody == null) {
-                return;
-            }
-            
-            try {
-                // Parse the response
-                GitHubContent[] contents = objectMapper.readValue(responseBody, GitHubContent[].class);
-                
-                // Process each item
-                for (GitHubContent content : contents) {
-                    // Skip if we've reached the maximum files
-                    if (filesToReview.size() >= maxFilesToReview) {
-                        return;
-                    }
-                    
-                    // If it's a directory, recursively process it if not ignored
-                    if ("dir".equals(content.getType())) {
-                        if (!shouldIgnoreDirectory(content.getName())) {
-                            recursivelyFetchContentsForReview(content.getUrl(), headers, filesToReview, maxFilesToReview);
-                        }
-                    } 
-                    // If it's a file and it's a supported type, add it to the files to review
-                    else if ("file".equals(content.getType()) && isSupportedFileType(content.getName())) {
-                        try {
-                            // Fetch the file content using WebClient
-                            String fileContent = githubWebClient.get()
-                                .uri(content.getDownloadUrl())
-                                .retrieve()
-                                .bodyToMono(String.class)
-                                .timeout(REQUEST_TIMEOUT)
-                                .block();
-                                
-                            if (fileContent != null && !fileContent.isBlank()) {
-                                // Add to files to review
-                                GitHubFile file = new GitHubFile();
-                                file.setName(content.getName());
-                                file.setPath(content.getPath());
-                                file.setContent(fileContent);
-                                filesToReview.add(file);
-                            }
-                        } catch (Exception e) {
-                            log.warn("Could not fetch content for file {}: {}", content.getPath(), e.getMessage());
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Error parsing GitHub API response: {}", e.getMessage());
-            }
-            
-        } catch (Exception e) {
-            log.error("Error during recursively fetching content: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Check if a directory should be ignored during the recursive traversal
-     * 
-     * @param dirName Directory name to check
-     * @return true if the directory should be ignored, false otherwise
-     */
-    private boolean shouldIgnoreDirectory(String dirName) {
-        // Ignore common directories that don't typically contain application code
-        // or might contain too many files (like node_modules)
-        return dirName != null && (
-            dirName.equalsIgnoreCase("node_modules") ||
-            dirName.equalsIgnoreCase(".git") ||
-            dirName.equalsIgnoreCase(".github") ||
-            dirName.equalsIgnoreCase(".idea") ||
-            dirName.equalsIgnoreCase(".vscode") ||
-            dirName.equalsIgnoreCase("target") ||
-            dirName.equalsIgnoreCase("build") ||
-            dirName.equalsIgnoreCase("dist") ||
-            dirName.equalsIgnoreCase("out") ||
-            dirName.equalsIgnoreCase("coverage") ||
-            dirName.equalsIgnoreCase(".metadata") ||  // Added .metadata directory to ignore list
-            dirName.equalsIgnoreCase("__pycache__") ||
-            dirName.equals("bin") ||   // Binary outputs
-            dirName.equals("obj") ||   // Object files
-            dirName.startsWith(".")    // Any hidden directory
+        // Create single file review prompt
+        String singleFilePrompt = String.format(
+                REVIEW_PROMPT_TEMPLATE,
+                repositoryUrl,
+                formattedGuidelines,
+                file.getContent()
         );
-    }
 
-    /**
-     * Checks if a file is a supported code file based on its extension
-     */
-    private boolean isSupportedFileType(String fileName) {
-        return SUPPORTED_EXTENSIONS.stream()
-                .anyMatch(ext -> fileName.toLowerCase().endsWith(ext));
-    }
+        try {
+            // Generate AI review for this file
+            String fileReview = generateAIReview(singleFilePrompt, file.getPath());
 
-    /**
-     * GitHub Content API response class
-     */
-    @Data
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class GitHubContent {
-        private String name;
-        private String path;
-        private String type;
-        @JsonProperty("download_url")
-        private String downloadUrl;
-        private String url;
-
-        // Jackson will map "download_url" from JSON to this field
-        public String getDownloadUrl() {
-            return downloadUrl;
-        }
-
-        // This is needed for Jackson deserialization
-        public void setDownloadUrl(String downloadUrl) {
-            this.downloadUrl = downloadUrl;
+            // Add the file review to the final review
+            finalReview.append(fileReview).append("\n\n");
+        } catch (Exception e) {
+            log.error("Error reviewing file {}: {}", file.getPath(), e.getMessage(), e);
+            finalReview.append("Error reviewing this file: ").append(e.getMessage()).append("\n\n");
+            // Continue to the next file instead of failing the entire review
         }
     }
 
     /**
-     * GitHub file with content
+     * Generates a code review using the AI model with retry logic for handling interruptions
+     *
+     * @param prompt The prompt to send to the AI model
+     * @param fileIdentifier A string to identify the file in logs (file path or name)
+     * @return The generated review text
+     * @throws AIModelException If the AI model fails to generate a review
+     * @throws RequestInterruptedException If the request is interrupted and cannot be retried
      */
-    @Data
-    @NoArgsConstructor
-    private static class GitHubFile {
-        private String name;
-        private String path;
-        private String content;
+    protected String generateAIReview(String prompt, String fileIdentifier) throws AIModelException, RequestInterruptedException {
+        // Generate user message object for the AI model
+        UserMessage userMessage = new UserMessage(prompt);
+        Prompt aiPrompt = new Prompt(userMessage);
+
+        // Add retry logic for handling interruptions
+        int maxRetries = 3;
+        int currentAttempt = 0;
+        ChatResponse response = null;
+
+        while (currentAttempt < maxRetries) {
+            try {
+                currentAttempt++;
+                log.info("Attempt {} of {} to call AI model for file: {}",
+                        currentAttempt, maxRetries, fileIdentifier);
+
+                response = chatModel.call(aiPrompt);
+                // If successful, break out of the retry loop
+                break;
+            } catch (Exception e) {
+                // Check if it's an interruption-related exception
+                if (isInterruptionException(e) && currentAttempt < maxRetries) {
+                    log.warn("AI model call was interrupted. Will retry ({}/{})", currentAttempt, maxRetries);
+                    // Wait before retrying (exponential backoff)
+                    try {
+                        Thread.sleep(1000 * currentAttempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RequestInterruptedException("Thread interrupted during retry wait", ie);
+                    }
+                } else {
+                    // Either not an interruption or we've exhausted retries
+                    throw new AIModelException("Failed to generate code review after multiple retries", e);
+                }
+            }
+        }
+
+        // If we got through the retries with no success
+        if (response == null) {
+            return "Failed to review this file after multiple attempts.";
+        }
+
+        // Extract and return the review text
+        return response.getResult().getOutput().getText();
     }
+
+    /**
+     * Creates a response for an empty repository (no files to review)
+     *
+     * @param repositoryUrl Original repository URL
+     * @return CodeReviewResponse with informative message
+     */
+    protected CodeReviewResponse createEmptyReviewResponse(String repositoryUrl) {
+        String noFilesMessage = "No suitable files were found for review in the repository. This may be because:\n" +
+                "1. The repository is empty or contains no supported file types\n" +
+                "2. All code files are in ignored directories\n" +
+                "3. There was an issue accessing the files from the repository\n\n" +
+                "Please check that your repository contains code files with supported extensions and try again.";
+
+        // Convert markdown to HTML
+        String htmlMessage = markdownConverter.convertMarkdownToHtml(noFilesMessage);
+
+        return CodeReviewResponse.builder()
+                .review(noFilesMessage)
+                .htmlReview(htmlMessage)
+                .guidelines(new ArrayList<>()) // Initialize with empty list instead of null
+                .timestamp(LocalDateTime.now())
+                .repositoryUrl(repositoryUrl)
+                .build();
+    }
+
 }
