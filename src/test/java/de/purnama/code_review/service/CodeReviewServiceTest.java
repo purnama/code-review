@@ -1,10 +1,7 @@
 package de.purnama.code_review.service;
 
 import de.purnama.code_review.config.OpenAIConfig;
-import de.purnama.code_review.exception.AIModelException;
-import de.purnama.code_review.exception.CodeReviewException;
-import de.purnama.code_review.exception.GitProviderException;
-import de.purnama.code_review.exception.InvalidCodeReviewRequestException;
+import de.purnama.code_review.exception.*;
 import de.purnama.code_review.model.CodeReviewRequest;
 import de.purnama.code_review.model.CodeReviewResponse;
 import de.purnama.code_review.model.ContentBlock;
@@ -228,5 +225,70 @@ class CodeReviewServiceTest {
 
         // Act & Assert
         assertThrows(CodeReviewException.class, () -> codeReviewService.reviewCode(request));
+    }
+
+    @Test
+    void testSplitCodeIntoChunks_basicScenarios() throws Exception {
+        String codeSmall = "int a = 1;";
+        String codeExact = "int a = 1;\nint b = 2;";
+        String codeLarge = "int a = 1;\n\nint b = 2;\n\nint c = 3;\n\nint d = 4;";
+        int chunkSize = 10;
+
+        // Use reflection to access private method
+        java.lang.reflect.Method method = CodeReviewService.class.getDeclaredMethod(
+                "splitCodeIntoChunks", String.class, int.class);
+        method.setAccessible(true);
+
+        // Small code, should return one chunk
+        List<String> resultSmall = (List<String>) method.invoke(codeReviewService, codeSmall, chunkSize);
+        assertEquals(1, resultSmall.size());
+        assertEquals(codeSmall, resultSmall.get(0));
+
+        // Code exactly chunk size, should return one chunk
+        List<String> resultExact = (List<String>) method.invoke(codeReviewService, codeExact, codeExact.length());
+        assertEquals(1, resultExact.size());
+        assertEquals(codeExact, resultExact.get(0));
+
+        // Large code, should return multiple chunks
+        List<String> resultLarge = (List<String>) method.invoke(codeReviewService, codeLarge, chunkSize);
+        assertTrue(resultLarge.size() > 1);
+        assertEquals(codeLarge.replaceAll("\\n", ""), String.join("", resultLarge).replaceAll("\\n", ""));
+    }
+
+    @Test
+    void processIndividualChunk_shouldReturnReviewTextOnSuccess() throws AIModelException {
+        String repoUrl = "repo";
+        String chunk = "code chunk";
+        String guidelines = "guidelines";
+        int chunkNumber = 1, totalChunks = 1;
+        when(chatModel.call(any(Prompt.class))).thenReturn(chatResponse);
+        when(chatResponse.getResult()).thenReturn(generation);
+        when(generation.getOutput()).thenReturn(assistantMessage);
+        when(assistantMessage.getText()).thenReturn("review text");
+        String result = codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks);
+        assertEquals("review text", result);
+    }
+
+    @Test
+    void processIndividualChunk_shouldReturnFailureMessageOnNullResponse() throws AIModelException {
+        String repoUrl = "repo";
+        String chunk = "code chunk";
+        String guidelines = "guidelines";
+        int chunkNumber = 1, totalChunks = 1;
+        when(chatModel.call(any(Prompt.class))).thenReturn(null);
+        String result = codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks);
+        assertEquals("Failed to review this chunk after multiple attempts.", result);
+    }
+
+    @Test
+    void processIndividualChunk_shouldPropagateException() {
+        String repoUrl = "repo";
+        String chunk = "code chunk";
+        String guidelines = "guidelines";
+        int chunkNumber = 1, totalChunks = 1;
+        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("AI error"));
+        assertThrows(RuntimeException.class, () ->
+            codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks)
+        );
     }
 }
