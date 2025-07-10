@@ -88,57 +88,43 @@ class CodeReviewServiceGenerateAIReviewTest {
     }
 
     @Test
-    void generateAIReview_ShouldRetryOnInterruption() throws Exception {
-        // Arrange - First call throws exception that should be detected as interruption, second call succeeds
+    void generateAIReview_ShouldThrowRuntimeException_WhenOperationTimesOut() throws Exception {
+        // Arrange - ChatModel throws a timeout exception
         when(chatModel.call(any(Prompt.class)))
-                .thenThrow(new RuntimeException("Operation timed out"))
-                .thenReturn(chatResponse);
+                .thenThrow(new RuntimeException("Operation timed out"));
 
-        // Mock isInterruptionException to return true for our exception to ensure retry logic is triggered
-        CodeReviewService spyService = spy(codeReviewService);
-        doReturn(true).when(spyService).isInterruptionException(any(Exception.class));
+        // Act & Assert - Expect the RuntimeException to be thrown directly
+        RuntimeException exception = assertThrows(RuntimeException.class,
+            () -> codeReviewService.generateAIReview(testPrompt, fileId));
 
-        when(chatResponse.getResult()).thenReturn(generation);
-        when(generation.getOutput()).thenReturn(assistantMessage);
-        when(assistantMessage.getText()).thenReturn(expectedReview);
-
-        // Act
-        String result = spyService.generateAIReview(testPrompt, fileId);
-
-        // Assert
-        assertEquals(expectedReview, result);
-        verify(chatModel, times(2)).call(any(Prompt.class));
+        assertEquals("Operation timed out", exception.getMessage());
+        verify(chatModel, times(1)).call(any(Prompt.class));
     }
 
     @Test
     void generateAIReview_ShouldThrowException_WhenAllRetriesFail() {
-        // Arrange - ChatModel will throw non-interruption exceptions
+        // Arrange - ChatModel will throw RuntimeException
         when(chatModel.call(any(Prompt.class)))
                 .thenThrow(new RuntimeException("Failed attempt"));
 
-        // Use spy to control the behavior of isInterruptionException
-        CodeReviewService spyService = spy(codeReviewService);
-        doReturn(false).when(spyService).isInterruptionException(any(Exception.class));
+        // Act & Assert - Expect the actual RuntimeException to be thrown
+        RuntimeException exception = assertThrows(RuntimeException.class,
+            () -> codeReviewService.generateAIReview(testPrompt, fileId));
 
-        // Act & Assert
-        AIModelException exception = assertThrows(AIModelException.class,
-            () -> spyService.generateAIReview(testPrompt, fileId));
-
-        assertTrue(exception.getMessage().contains("Failed to generate code review after multiple retries"));
-        // Since we're not retrying, it should only be called once
+        assertEquals("Failed attempt", exception.getMessage());
         verify(chatModel, times(1)).call(any(Prompt.class));
     }
 
     @Test
     void generateAIReview_ShouldHandleNullResponse() throws Exception {
-        // Arrange - ChatModel returns non-null response but with null result chain
+        // Arrange - ChatModel returns null response
         when(chatModel.call(any(Prompt.class))).thenReturn(null);
 
-        // Act
-        String result = codeReviewService.generateAIReview(testPrompt, fileId);
+        // Act & Assert - Expect AIModelException for null response
+        AIModelException exception = assertThrows(AIModelException.class,
+            () -> codeReviewService.generateAIReview(testPrompt, fileId));
 
-        // Assert - should return the fallback message
-        assertEquals("Failed to review this file after multiple attempts.", result);
+        assertTrue(exception.getMessage().contains("AI model returned null response for file: TestFile.java"));
         verify(chatModel, times(1)).call(any(Prompt.class));
     }
 
@@ -158,40 +144,5 @@ class CodeReviewServiceGenerateAIReviewTest {
         assertTrue(result2, "Should identify RuntimeException with timeout message");
         assertFalse(result3, "Should not identify unrelated exceptions");
         assertFalse(result4, "Should handle null exception");
-    }
-
-    @Test
-    void generateAIReview_ShouldHandleInterruptedRetry() throws Exception {
-        // Create a special test implementation that forces the expected exception
-        CodeReviewService testService = new CodeReviewService(
-                embeddingService, chatModel, openAIConfig, markdownConverter, gitProviderFactory) {
-            @Override
-            protected String generateAIReview(String prompt, String fileId) throws AIModelException, RequestInterruptedException {
-                // In this override, we're going to simulate what happens in the real method
-                // but force an InterruptedException during the retry sleep
-                try {
-                    chatModel.call(new Prompt(new UserMessage(prompt)));
-                    throw new RuntimeException("First attempt fails");
-                } catch (Exception e) {
-                    // Now simulate the retry logic throwing an InterruptedException
-                    try {
-                        Thread.sleep(1); // This will never execute, just for showing the pattern
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new RequestInterruptedException("Thread interrupted during retry wait", ie);
-                    }
-
-                    // Force the RequestInterruptedException to be thrown
-                    throw new RequestInterruptedException("Thread interrupted during retry wait",
-                            new InterruptedException("Test interruption"));
-                }
-            }
-        };
-
-        // Act & Assert - should throw RequestInterruptedException
-        RequestInterruptedException exception = assertThrows(RequestInterruptedException.class,
-                () -> testService.generateAIReview(testPrompt, fileId));
-
-        assertTrue(exception.getMessage().contains("Thread interrupted during retry wait"));
     }
 }

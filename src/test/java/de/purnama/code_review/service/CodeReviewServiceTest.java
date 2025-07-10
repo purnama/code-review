@@ -194,37 +194,17 @@ class CodeReviewServiceTest {
         List<ContentBlock> relevantBlocks = Collections.singletonList(block);
         when(embeddingService.findSimilarContent(anyString(), anyInt())).thenReturn(relevantBlocks);
 
+        // Set configuration values
+        when(openAIConfig.getFileChunkSize()).thenReturn(1000);
+        when(openAIConfig.getContentBlocksLimit()).thenReturn(5);
+
         // Setting up AI model to throw an exception
-        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("AI model error"));
+        RuntimeException aiModelError = new RuntimeException("AI model error");
+        when(chatModel.call(any(Prompt.class))).thenThrow(aiModelError);
 
-        // Act & Assert
-        assertThrows(AIModelException.class, () -> codeReviewService.reviewCode(request));
-    }
-
-    @Test
-    void reviewCode_ShouldHandleGenericException_AsCodeReviewException() throws Exception {
-        // Arrange
-        String repositoryUrl = "https://github.com/username/repo/blob/main/src/file.java";
-        CodeReviewRequest request = new CodeReviewRequest();
-        request.setRepositoryUrl(repositoryUrl);
-
-        // Setup git provider factory
-        when(gitProviderFactory.getProvider(repositoryUrl)).thenReturn(gitProvider);
-
-        // Setup repository info
-        Map<String, String> repoInfo = new HashMap<>();
-        repoInfo.put("owner", "username");
-        repoInfo.put("repo", "repo");
-        repoInfo.put("branch", "main");
-        repoInfo.put("path", "src/file.java");
-        when(gitProvider.extractRepositoryInfoFromUrl(repositoryUrl)).thenReturn(repoInfo);
-
-        // Setting up GitProvider to throw a generic exception
-        when(gitProvider.fetchFileContent(repositoryUrl))
-            .thenThrow(new RuntimeException("Generic error"));
-
-        // Act & Assert
-        assertThrows(CodeReviewException.class, () -> codeReviewService.reviewCode(request));
+        // Act & Assert - Expect the actual RuntimeException to propagate
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> codeReviewService.reviewCode(request));
+        assertEquals("AI model error", thrown.getMessage());
     }
 
     @Test
@@ -270,25 +250,17 @@ class CodeReviewServiceTest {
     }
 
     @Test
-    void processIndividualChunk_shouldReturnFailureMessageOnNullResponse() throws AIModelException {
+    void processIndividualChunk_shouldThrowAIModelException_OnNullResponse() throws AIModelException {
         String repoUrl = "repo";
         String chunk = "code chunk";
         String guidelines = "guidelines";
         int chunkNumber = 1, totalChunks = 1;
         when(chatModel.call(any(Prompt.class))).thenReturn(null);
-        String result = codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks);
-        assertEquals("Failed to review this chunk after multiple attempts.", result);
-    }
 
-    @Test
-    void processIndividualChunk_shouldPropagateException() {
-        String repoUrl = "repo";
-        String chunk = "code chunk";
-        String guidelines = "guidelines";
-        int chunkNumber = 1, totalChunks = 1;
-        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("AI error"));
-        assertThrows(RuntimeException.class, () ->
-            codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks)
-        );
+        // Act & Assert - Expect AIModelException for null response
+        AIModelException exception = assertThrows(AIModelException.class, () ->
+            codeReviewService.processIndividualChunk(repoUrl, chunk, guidelines, chunkNumber, totalChunks));
+
+        assertTrue(exception.getMessage().contains("AI model returned null response for file: " + repoUrl));
     }
 }

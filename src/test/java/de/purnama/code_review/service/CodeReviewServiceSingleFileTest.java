@@ -100,8 +100,11 @@ class CodeReviewServiceSingleFileTest {
         when(embeddingService.findSimilarContent(anyString(), anyInt()))
                 .thenReturn(List.of(ContentBlock.builder().title("Test Guideline").content("Follow best practices.").build()));
         when(openAIConfig.getContentBlocksLimit()).thenReturn(5);
+        when(openAIConfig.getFileChunkSize()).thenReturn(1000);
         when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("Unexpected error"));
-        assertThrows(AIModelException.class, this::invokeReviewSingleFile);
+
+        // RuntimeException should now propagate directly, not be wrapped in AIModelException
+        assertThrows(RuntimeException.class, this::invokeReviewSingleFile);
     }
 
     private CodeReviewResponse invokeReviewSingleFile() throws Exception {

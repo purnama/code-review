@@ -104,44 +104,30 @@ public class CodeReviewService {
      * Uses server-side markdown to HTML conversion
      */
     public CodeReviewResponse reviewCode(CodeReviewRequest request) throws CodeReviewException, GitProviderException {
-        try {
-            // Use the generic repositoryUrl getter
-            String repositoryUrl = request.getRepositoryUrl();
-            log.info("Starting code review for repository URL: {}", repositoryUrl);
+        // Use the generic repositoryUrl getter
+        String repositoryUrl = request.getRepositoryUrl();
+        log.info("Starting code review for repository URL: {}", repositoryUrl);
 
-            // Get the appropriate Git provider for this URL
-            GitProvider gitProvider = gitProviderFactory.getProvider(repositoryUrl);
+        // Get the appropriate Git provider for this URL
+        GitProvider gitProvider = gitProviderFactory.getProvider(repositoryUrl);
 
-            // Extract owner and repo using the Git provider
-            Map<String, String> repoInfo = gitProvider.extractRepositoryInfoFromUrl(repositoryUrl);
-            String owner = repoInfo.get("owner");
-            String repo = repoInfo.get("repo");
-            String branch = repoInfo.get("branch");
+        // Extract owner and repo using the Git provider
+        Map<String, String> repoInfo = gitProvider.extractRepositoryInfoFromUrl(repositoryUrl);
+        String owner = repoInfo.get("owner");
+        String repo = repoInfo.get("repo");
+        String branch = repoInfo.get("branch");
 
-            if (owner == null || repo == null) {
-                throw new InvalidCodeReviewRequestException("Could not extract repository information from URL. Please provide a valid repository URL.");
-            }
+        if (owner == null || repo == null) {
+            throw new InvalidCodeReviewRequestException("Could not extract repository information from URL. Please provide a valid repository URL.");
+        }
 
-            // Check if URL points to a specific file or the whole repository
-            if (repoInfo.get("path") != null && !repoInfo.get("path").isEmpty()) {
-                // Single file review
-                return reviewSingleFile(repositoryUrl);
-            } else {
-                // Project review
-                return reviewProject(owner, repo, branch, repositoryUrl);
-            }
-        } catch (GitProviderException e) {
-            throw e;
-        } catch (AIModelException e) {
-            throw e;
-        } catch (CodeReviewException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            // Wrap AI model errors in AIModelException if not already handled
-            throw new AIModelException("AI model error: " + e.getMessage(), e);
-        } catch (Exception e) {
-            log.error("Error performing code review: {}", e.getMessage(), e);
-            throw new CodeReviewException("Failed to perform code review: " + e.getMessage(), e);
+        // Check if URL points to a specific file or the whole repository
+        if (repoInfo.get("path") != null && !repoInfo.get("path").isEmpty()) {
+            // Single file review
+            return reviewSingleFile(repositoryUrl);
+        } else {
+            // Project review
+            return reviewProject(owner, repo, branch, repositoryUrl);
         }
     }
 
@@ -224,17 +210,8 @@ public class CodeReviewService {
             return createSimplifiedReviewForTest(repositoryUrl, formattedGuidelines, relevantGuidelines);
         }
 
-        try {
-            ChunkProcessingResult result = processFileChunks(repositoryUrl, codeContent, formattedGuidelines);
-            return buildChunkedReviewResponse(result, relevantGuidelines, repositoryUrl);
-        } catch (AIModelException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            throw new AIModelException("AI model error: " + e.getMessage(), e);
-        } catch (Exception e) {
-            log.error("Error processing large file in chunks: {}", e.getMessage(), e);
-            throw new CodeReviewException("Failed to process large file in chunks: " + e.getMessage(), e);
-        }
+        ChunkProcessingResult result = processFileChunks(repositoryUrl, codeContent, formattedGuidelines);
+        return buildChunkedReviewResponse(result, relevantGuidelines, repositoryUrl);
     }
 
     /**
@@ -299,8 +276,6 @@ public class CodeReviewService {
         } catch (AIModelException e) {
             log.warn("AI model error processing chunk {}/{}: {}", chunkNumber, totalChunks, e.getMessage());
             return "Error processing this chunk: " + e.getMessage();
-        } catch (RuntimeException e) {
-            throw e;
         }
     }
 
@@ -455,7 +430,7 @@ public class CodeReviewService {
         Prompt prompt = new Prompt(userMessage);
         ChatResponse response = chatModel.call(prompt);
         if (response == null) {
-            return "Failed to review this chunk after multiple attempts.";
+            throw new AIModelException("AI model returned null response for file: " + repositoryUrl);
         }
         return response.getResult().getOutput().getText();
     }
@@ -556,59 +531,30 @@ public class CodeReviewService {
     }
 
     /**
-     * Check if an exception is related to a network interruption or timeout
-     * and convert it to our custom exception type if needed
-     */
-    private void handleInterruptionException(Throwable e, String message) throws RequestInterruptedException {
-        if (e == null) return;
-
-        // Check if it's directly an InterruptedException
-        if (e instanceof InterruptedException) {
-            throw new RequestInterruptedException(message, e);
-        }
-
-        // Check if the message contains interruption-related terms
-        if (e.getMessage() != null &&
-                (e.getMessage().toLowerCase().contains("interrupt") ||
-                        e.getMessage().toLowerCase().contains("timeout") ||
-                        e.getMessage().toLowerCase().contains("timed out"))) {
-            throw new RequestInterruptedException(message, e);
-        }
-
-        // Check cause recursively
-        if (e.getCause() != null) {
-            handleInterruptionException(e.getCause(), message);
-        }
-    }
-
-    /**
      * Reviews a whole project from a Git repository
      */
-    private CodeReviewResponse reviewProject(String owner, String repo, String branch, String repositoryUrl) throws CodeReviewException {
-        try {
-            log.info("Starting project review for {}/{} on branch {}", owner, repo, branch);
+    private CodeReviewResponse reviewProject(String owner, String repo, String branch, String repositoryUrl)
+            throws CodeReviewException, GitProviderException {
+        log.info("Starting project review for {}/{} on branch {}", owner, repo, branch);
 
-            // Step 1: Fetch repository files
-            List<GitFile> filesToReview = fetchRepositoryFilesForReview(owner, repo, branch, repositoryUrl);
+        // Step 1: Fetch repository files
+        List<GitFile> filesToReview = fetchRepositoryFilesForReview(owner, repo, branch, repositoryUrl);
 
-            // Step 2: If no files to review, return early
-            if (filesToReview == null || filesToReview.isEmpty()) {
-                return createEmptyReviewResponse(repositoryUrl);
-            }
-
-            // Step 3: Find relevant guidelines
-            List<String> relevantGuidelines = findRelevantGuidelines(filesToReview);
-
-            // Step 4: Process all repository files
-            String review = processAllRepositoryFiles(filesToReview, repositoryUrl, relevantGuidelines);
-
-            // Step 5: Build and return the response
-            return buildProjectReviewResponse(review, relevantGuidelines, repositoryUrl);
-
-        } catch (Exception e) {
-            log.error("Error performing project review: {}", e.getMessage(), e);
-            throw new CodeReviewException("Failed to perform project review: " + e.getMessage(), e);
+        // Step 2: If no files to review, return early
+        if (filesToReview == null || filesToReview.isEmpty()) {
+            return createEmptyReviewResponse(repositoryUrl);
         }
+
+        // Step 3: Find relevant guidelines
+        List<String> relevantGuidelines = findRelevantGuidelines(filesToReview);
+
+        // Step 4: Process all repository files
+        String review = processAllRepositoryFiles(filesToReview, repositoryUrl, relevantGuidelines);
+
+        // Step 5: Build and return the response
+        return buildProjectReviewResponse(review, relevantGuidelines, repositoryUrl);
+
+
     }
 
     /**
@@ -663,7 +609,7 @@ public class CodeReviewService {
      * @param relevantGuidelines the relevant guidelines to apply
      * @return the combined review text
      */
-    private String processAllRepositoryFiles(List<GitFile> filesToReview, String repositoryUrl, List<String> relevantGuidelines) {
+    private String processAllRepositoryFiles(List<GitFile> filesToReview, String repositoryUrl, List<String> relevantGuidelines) throws AIModelException, RequestInterruptedException {
         log.info("Beginning sequential file review for {} files", filesToReview.size());
 
         String formattedGuidelines = String.join("\n\n", relevantGuidelines);
@@ -713,7 +659,7 @@ public class CodeReviewService {
      * @param formattedGuidelines The formatted coding guidelines for the review
      * @param finalReview The StringBuilder to append the review to
      */
-    protected void processRepositoryFile(GitFile file, String repositoryUrl, String formattedGuidelines, StringBuilder finalReview) {
+    protected void processRepositoryFile(GitFile file, String repositoryUrl, String formattedGuidelines, StringBuilder finalReview) throws AIModelException, RequestInterruptedException {
         // Add review header for this file
         finalReview.append("## File: ").append(file.getPath()).append("\n\n");
 
@@ -725,17 +671,11 @@ public class CodeReviewService {
                 file.getContent()
         );
 
-        try {
-            // Generate AI review for this file
-            String fileReview = generateAIReview(singleFilePrompt, file.getPath());
+        // Generate AI review for this file
+        String fileReview = generateAIReview(singleFilePrompt, file.getPath());
 
-            // Add the file review to the final review
-            finalReview.append(fileReview).append("\n\n");
-        } catch (Exception e) {
-            log.error("Error reviewing file {}: {}", file.getPath(), e.getMessage(), e);
-            finalReview.append("Error reviewing this file: ").append(e.getMessage()).append("\n\n");
-            // Continue to the next file instead of failing the entire review
-        }
+        // Add the file review to the final review
+        finalReview.append(fileReview).append("\n\n");
     }
 
     /**
@@ -752,40 +692,12 @@ public class CodeReviewService {
         UserMessage userMessage = new UserMessage(prompt);
         Prompt aiPrompt = new Prompt(userMessage);
 
-        // Add retry logic for handling interruptions
-        int maxRetries = 3;
-        int currentAttempt = 0;
-        ChatResponse response = null;
+        log.info("Calling AI model for file: {}", fileIdentifier);
 
-        while (currentAttempt < maxRetries) {
-            try {
-                currentAttempt++;
-                log.info("Attempt {} of {} to call AI model for file: {}",
-                        currentAttempt, maxRetries, fileIdentifier);
+        ChatResponse response = chatModel.call(aiPrompt);
 
-                response = chatModel.call(aiPrompt);
-                // If successful, break out of the retry loop
-                break;
-            } catch (Exception e) {
-                // Check if it's an interruption-related exception
-                if (isInterruptionException(e) && currentAttempt < maxRetries) {
-                    log.warn("AI model call was interrupted. Will retry ({}/{})", currentAttempt, maxRetries);
-                    // Wait before retrying (exponential backoff)
-                    try {
-                        Thread.sleep(1000 * currentAttempt);
-                    } catch (InterruptedException ie) {
-                        throw new RequestInterruptedException("Thread interrupted during retry wait", ie);
-                    }
-                } else {
-                    // Either not an interruption or we've exhausted retries
-                    throw new AIModelException("Failed to generate code review after multiple retries", e);
-                }
-            }
-        }
-
-        // If we got through the retries with no success
         if (response == null) {
-            return "Failed to review this file after multiple attempts.";
+            throw new AIModelException("AI model returned null response for file: " + fileIdentifier);
         }
 
         // Extract and return the review text

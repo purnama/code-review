@@ -343,6 +343,26 @@ class CodeReviewServiceMethodTests {
     }
 
     /**
+     * Helper method to invoke private methods on a specific service instance using reflection
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T invokePrivateMethod(CodeReviewService service, String methodName, Object... args) throws Exception {
+        try {
+            return (T) ReflectionTestUtils.invokeMethod(service, methodName, args);
+        } catch (RuntimeException e) {
+            // ReflectionTestUtils wraps checked exceptions in RuntimeExceptions
+            // Unwrap and rethrow the original exception if it's a checked exception we expect
+            if (e.getCause() instanceof GitProviderException) {
+                throw (GitProviderException) e.getCause();
+            }
+            if (e.getCause() instanceof Exception) {
+                throw (Exception) e.getCause();
+            }
+            throw e;
+        }
+    }
+
+    /**
      * Setup a complete execution chain for the test that will return
      * our predetermined review text from the ChatResponse
      */
@@ -370,21 +390,22 @@ class CodeReviewServiceMethodTests {
     }
 
     @Test
-    void processRepositoryFile_ShouldHandleExceptionGracefully_WhenReviewFails() throws AIModelException, RequestInterruptedException {
+    void processRepositoryFile_ShouldThrowException_WhenReviewFails() throws AIModelException, RequestInterruptedException {
         // Arrange
-        Exception testException = new AIModelException("Test review generation failed");
+        AIModelException testException = new AIModelException("Test review generation failed");
 
         // Mock generateAIReview to throw exception
         doThrow(testException).when(codeReviewService).generateAIReview(anyString(), anyString());
 
-        // Act
-        codeReviewService.processRepositoryFile(testFile, testGithubUrl, testGuidelines, testReviewOutput);
+        // Act & Assert - Expect the exception to propagate
+        AIModelException thrown = assertThrows(AIModelException.class, () ->
+            codeReviewService.processRepositoryFile(testFile, testGithubUrl, testGuidelines, testReviewOutput));
 
-        // Assert
+        assertEquals("Test review generation failed", thrown.getMessage());
+
+        // Only the header should have been added before the exception was thrown
         String result = testReviewOutput.toString();
         assertTrue(result.startsWith("## File: " + testFile.getPath()));
-        assertTrue(result.contains("Error reviewing this file:"));
-        assertTrue(result.contains("Test review generation failed"));
     }
 
     @Test
@@ -643,6 +664,48 @@ class CodeReviewServiceMethodTests {
 
         // Reset test mode
         codeReviewService.setTestMode(false);
+    }
+
+    @Test
+    void processLargeFileInChunks_ShouldWorkEndToEnd_InProductionMode() throws Exception {
+        // Arrange
+        String largeContent = "public class Large {\n    // This is a large file\n".repeat(50); // Create large content
+        List<String> guidelines = Arrays.asList("Test guideline 1", "Test guideline 2");
+        String formattedGuidelines = "Formatted guidelines";
+        String expectedHtml = "<h1>Production Review</h1>";
+
+        // Mock the chunk processing
+        CodeReviewService.ChunkProcessingResult mockResult =
+            new CodeReviewService.ChunkProcessingResult("Production review content", 2);
+
+        // Use lenient stubbing to avoid unnecessary stubbing warnings
+        lenient().when(openAIConfig.getFileChunkSize()).thenReturn(1000);
+        lenient().when(markdownConverter.convertMarkdownToHtml("Production review content")).thenReturn(expectedHtml);
+
+        // Create a real service instance and spy on it
+        CodeReviewService realService = new CodeReviewService(embeddingService, chatModel, openAIConfig, markdownConverter, gitProviderFactory);
+        CodeReviewService spyService = spy(realService);
+        doReturn(mockResult).when(spyService).processFileChunks(TEST_REPOSITORY_URL, largeContent, formattedGuidelines);
+
+        // Ensure test mode is disabled (production mode)
+        spyService.setTestMode(false);
+
+        // Act
+        CodeReviewResponse response = invokePrivateMethod(spyService, "processLargeFileInChunks",
+                TEST_REPOSITORY_URL, largeContent, formattedGuidelines, guidelines);
+
+        // Assert
+        assertNotNull(response);
+        assertEquals("Production review content", response.getReview());
+        assertEquals(expectedHtml, response.getHtmlReview());
+        assertEquals(guidelines, response.getGuidelines());
+        assertEquals(TEST_REPOSITORY_URL, response.getRepositoryUrl());
+        assertNotNull(response.getTimestamp());
+
+        // Verify that the production path was taken
+        verify(spyService).processFileChunks(TEST_REPOSITORY_URL, largeContent, formattedGuidelines);
+        verify(spyService).buildChunkedReviewResponse(mockResult, guidelines, TEST_REPOSITORY_URL);
+        verify(markdownConverter).convertMarkdownToHtml("Production review content");
     }
 
     @Test
