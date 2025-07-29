@@ -5,7 +5,7 @@
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>3.5.0</version>
-		<relativePath /> <!-- lookup parent from repository -->
+		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>de.purnama</groupId>
 	<artifactId>code-review</artifactId>
@@ -146,7 +146,7 @@
 		<dependency>
 			<groupId>org.hibernate.orm</groupId>
 			<artifactId>hibernate-vector</artifactId>
-			<version>6.6.15.Final</version>
+			<version>6.6.20.Final</version>
 		</dependency>
 
 		<!-- CommonMark for Markdown to HTML conversion -->
