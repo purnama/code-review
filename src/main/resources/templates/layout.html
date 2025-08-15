@@ -26,6 +26,9 @@
             padding-bottom: 60px;
             background-color: #f9fafb;
             color: var(--dark-color);
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }
         
         .navbar {
@@ -98,10 +101,12 @@
         }
         
         .footer {
-            margin-top: 40px;
+            margin-top: auto;
             padding: 20px 0;
             color: var(--secondary-color);
             font-size: 0.9rem;
+            background-color: #f1f5f9;
+            width: 100%;
         }
         
         /* Code specific styling */
@@ -131,6 +136,10 @@
                 padding-left: 20px;
                 padding-right: 20px;
             }
+        }
+
+        .content-wrapper {
+            flex: 1;
         }
     </style>
 </head>
@@ -184,12 +193,24 @@
         </div>
     </nav>
 
-    <div class="container mt-4">
+    <div class="container mt-4 content-wrapper">
         <!-- This is where child template content will be inserted -->
         <div layout:fragment="content">
             <!-- Child template content goes here -->
         </div>
     </div>
+
+    <!-- Added proper footer with correct GitHub link -->
+    <footer class="footer">
+        <div class="container text-center">
+            <p>&copy; 2023-2025 Code Review AI</p>
+            <p>
+                <a href="https://github.com/purnama/code-review" target="_blank" class="text-secondary">
+                    <i class="bi bi-github"></i> View on GitHub
+                </a>
+            </p>
+        </div>
+    </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -203,4 +224,3 @@
     </script>
 </body>
 </html>
-

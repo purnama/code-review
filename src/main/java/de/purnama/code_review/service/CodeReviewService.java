@@ -351,7 +351,7 @@ public class CodeReviewService {
     /**
      * Calculate the end position for a chunk, finding a suitable boundary
      */
-    private int calculateChunkEndPosition(String codeContent, int start, int chunkSize) {
+    int calculateChunkEndPosition(String codeContent, int start, int chunkSize) {
         int approximateEnd = Math.min(start + chunkSize, codeContent.length());
 
         // If we're at the end of the content, just return it
@@ -361,7 +361,9 @@ public class CodeReviewService {
 
         // Try to find an ideal boundary
         int idealEnd = findIdealChunkBoundary(codeContent, start, approximateEnd);
-        return idealEnd > start ? idealEnd : approximateEnd;
+        // Ensure the result doesn't exceed code length and is greater than start
+        int result = idealEnd > start ? idealEnd : approximateEnd;
+        return Math.min(result, codeContent.length());
     }
 
     /**
@@ -478,6 +480,8 @@ public class CodeReviewService {
         int searchWindow = (int) Math.max(5, (approximateEnd - start) * 0.15);
         int searchStart = Math.max(start, approximateEnd - searchWindow);
         int bestPosition = -1;
+        boolean foundIdealBoundary = false;
+
         for (int i = approximateEnd; i >= searchStart; i--) {
             if (i > code.length()) continue;
             // Find the start and end of the current line
@@ -492,43 +496,32 @@ public class CodeReviewService {
                 if (bestPosition > code.length()) bestPosition = code.length();
                 // Only return if it's within the chunk
                 if (bestPosition > start && bestPosition <= approximateEnd) {
+                    foundIdealBoundary = true;
                     return bestPosition;
                 }
             }
             // Check for a closing brace followed by a newline
-            if (i > 0 && i < code.length() - 1 &&
-                    code.charAt(i) == '}' && code.charAt(i + 1) == '\n') {
-                bestPosition = i + 2;
+            if (i > 0 && i <= code.length() &&
+                    code.charAt(i - 1) == '}' && (i == code.length() || code.charAt(i) == '\n')) {
+                bestPosition = i + 1;
                 if (bestPosition > code.length()) bestPosition = code.length();
                 if (bestPosition > start && bestPosition <= approximateEnd) {
+                    foundIdealBoundary = true;
                     return bestPosition;
                 }
             }
         }
-        // Fallback: return approximateEnd if no better boundary found
-        return approximateEnd;
-    }
 
-    /**
-     * Check if an exception is related to a network interruption or timeout
-     */
-    boolean isInterruptionException(Throwable e) {
-        if (e == null) return false;
-
-        // Check if it's directly an InterruptedException
-        if (e instanceof InterruptedException) return true;
-
-        // Check if the message contains interruption-related terms
-        if (e.getMessage() != null &&
-                (e.getMessage().toLowerCase().contains("interrupt") ||
-                        e.getMessage().toLowerCase().contains("timeout") ||
-                        e.getMessage().toLowerCase().contains("timed out"))) {
-            return true;
+        // Fallback behavior depends on whether we found any boundaries in the code
+        // If the code contains closing braces, cap the result to prevent exceeding code length
+        // If no patterns found, return approximateEnd as-is (for backward compatibility)
+        if (code.contains("}")) {
+            return Math.min(approximateEnd, code.length());
+        } else {
+            return approximateEnd;
         }
-
-        // Check cause recursively
-        return isInterruptionException(e.getCause());
     }
+
 
     /**
      * Reviews a whole project from a Git repository

@@ -1,26 +1,22 @@
 package de.purnama.code_review.service;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
+import de.purnama.code_review.config.OpenAIConfig;
+import de.purnama.code_review.exception.AIModelException;
+import de.purnama.code_review.service.git.GitProviderFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import de.purnama.code_review.config.OpenAIConfig;
-import de.purnama.code_review.exception.AIModelException;
-import de.purnama.code_review.exception.RequestInterruptedException;
-import de.purnama.code_review.service.git.GitProviderFactory;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CodeReviewServiceGenerateAIReviewTest {
@@ -126,23 +122,5 @@ class CodeReviewServiceGenerateAIReviewTest {
 
         assertTrue(exception.getMessage().contains("AI model returned null response for file: TestFile.java"));
         verify(chatModel, times(1)).call(any(Prompt.class));
-    }
-
-    @Test
-    void isInterruptionException_ShouldIdentifyInterruptionExceptions() {
-        // Test the helper method directly using reflection
-        boolean result1 = (boolean) ReflectionTestUtils.invokeMethod(
-                codeReviewService, "isInterruptionException", new InterruptedException());
-        boolean result2 = (boolean) ReflectionTestUtils.invokeMethod(
-                codeReviewService, "isInterruptionException", new RuntimeException("Operation timed out"));
-        boolean result3 = (boolean) ReflectionTestUtils.invokeMethod(
-                codeReviewService, "isInterruptionException", new RuntimeException("Other error"));
-        boolean result4 = (boolean) ReflectionTestUtils.invokeMethod(
-                codeReviewService, "isInterruptionException", (Exception)null);
-
-        assertTrue(result1, "Should identify InterruptedException");
-        assertTrue(result2, "Should identify RuntimeException with timeout message");
-        assertFalse(result3, "Should not identify unrelated exceptions");
-        assertFalse(result4, "Should handle null exception");
     }
 }
