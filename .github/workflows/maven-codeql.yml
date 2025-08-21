@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    - cron: '0 8 * * 1' # Run every Monday at 8:00 UTC (from your codeql.yml)
+    - cron: '0 8 * * 1' # Run every Monday at 8:00 UTC
 
 jobs:
   build-and-analyze:
@@ -16,18 +16,19 @@ jobs:
       actions: read
       contents: read
       security-events: write
-      packages: write # Added permission for GitHub Packages
+      packages: write
 
     strategy:
       fail-fast: false
       matrix:
         language: [ 'java' ]
-        # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
 
     env:
-      # PostgreSQL database credentials for both application and test
-      POSTGRES_USERNAME: ${{ secrets.POSTGRES_USERNAME || 'postgres' }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'password' }}
+      # OpenAI API key for tests
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # TestContainers configuration
+      TESTCONTAINERS_RYUK_DISABLED: true
+      TESTCONTAINERS_CHECKS_DISABLE: true
 
     steps:
     - name: Checkout repository
@@ -39,68 +40,58 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
-        server-id: github # Used for Maven publishing to GitHub Packages
-        settings-path: ${{ github.workspace }} # Path to generated settings.xml
+        server-id: github
+        settings-path: ${{ github.workspace }}
 
-    # Initialize CodeQL for security analysis (from codeql.yml)
+    # Initialize CodeQL for security analysis
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
-        # If you wish to specify custom queries, you can do so here or in a config file
-        # queries: security-extended,security-and-quality
 
-    # The rest of your original Maven workflow
-    - name: Set up Docker Compose
+    # Set up Docker for TestContainers
+    - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Start PostgreSQL with pgvector using Docker Compose
+    # Pull pgvector image to speed up TestContainers
+    - name: Pre-pull Docker images for TestContainers
       run: |
-        docker compose -f compose.yaml up -d postgres
-        # Wait for PostgreSQL to be ready (give it more time to initialize)
-        echo "Waiting for PostgreSQL to be ready..."
-        sleep 10  # Add a delay of 10 seconds
-        # Try multiple times to check if PostgreSQL is ready
-        for i in {1..10}; do
-          echo "Attempt $i: Checking if PostgreSQL is ready..."
-          if docker compose -f compose.yaml exec -T postgres pg_isready -U "$POSTGRES_USERNAME"; then
-            echo "PostgreSQL is ready!"
-            break
-          fi
-          echo "PostgreSQL is not ready yet. Waiting..."
-          sleep 5
-        done
-        
-        echo "Creating test database..."
-        # Create the test database if it doesn't exist
-        docker compose -f compose.yaml exec -T postgres psql -U "$POSTGRES_USERNAME" -c "CREATE DATABASE code_review_test WITH OWNER $POSTGRES_USERNAME"
+        docker pull pgvector/pgvector:pg17
+        echo "Pre-pulled pgvector image for TestContainers"
 
     - name: Debug Migration Files
       run: |
         echo "Listing migration files:"
-        find src/main/resources/db/migration -type f | sort
-        echo "Migration file contents:"
-        cat src/main/resources/db/migration/V5__add_active_column_to_confluence_urls.sql
-        cat src/main/resources/db/migration/V6__add_embedding_column_to_content_blocks.sql
+        find src/main/resources/db/migration -type f | sort || echo "No migration files found"
 
-    - name: Build with Maven and Run Tests
-      run: ./mvnw -B package --file pom.xml
+    - name: Build with Maven and Run Tests (using TestContainers)
+      run: ./mvnw -B clean package --file pom.xml
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    # CodeQL analysis
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
 
     - name: SonarCloud Analysis
       uses: SonarSource/sonarcloud-github-action@master
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      # Configuration will be automatically read from sonar-project.properties
 
     - name: SonarQube Quality Gate check
       uses: sonarsource/sonarqube-quality-gate-action@master
-      # Force to fail step after specific time
       timeout-minutes: 5
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
         scanMetadataReportFile: .scannerwork/report-task.txt
-      # This step will fail if the Quality Gate status is not OK
+
+    # Publish to GitHub Packages (only on main branch pushes)
+    - name: Publish to GitHub Packages
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: ./mvnw -B deploy --file pom.xml -DskipTests
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

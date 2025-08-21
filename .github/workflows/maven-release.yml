@@ -14,9 +14,11 @@ jobs:
       pull-requests: write
 
     env:
-      # PostgreSQL database credentials for tests during release
-      POSTGRES_USERNAME: ${{ secrets.POSTGRES_USERNAME || 'postgres' }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'password' }}
+      # OpenAI API key for tests
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # TestContainers configuration
+      TESTCONTAINERS_RYUK_DISABLED: true
+      TESTCONTAINERS_CHECKS_DISABLE: true
 
     steps:
     - name: Checkout code
@@ -40,29 +42,13 @@ jobs:
         git config user.email "actions@github.com"
         git config user.name "GitHub Actions"
 
-    - name: Set up Docker Compose
+    - name: Set up Docker for TestContainers
       uses: docker/setup-buildx-action@v3
 
-    - name: Start PostgreSQL with pgvector using Docker Compose
+    - name: Pre-pull Docker images for TestContainers
       run: |
-        docker compose -f compose.yaml up -d postgres
-        # Wait for PostgreSQL to be ready
-        echo "Waiting for PostgreSQL to be ready..."
-        sleep 10
-        # Try multiple times to check if PostgreSQL is ready
-        for i in {1..10}; do
-          echo "Attempt $i: Checking if PostgreSQL is ready..."
-          if docker compose -f compose.yaml exec -T postgres pg_isready -U "$POSTGRES_USERNAME"; then
-            echo "PostgreSQL is ready!"
-            break
-          fi
-          echo "PostgreSQL is not ready yet. Waiting..."
-          sleep 5
-        done
-        
-        echo "Creating test database..."
-        # Create the test database if it doesn't exist
-        docker compose -f compose.yaml exec -T postgres psql -U "$POSTGRES_USERNAME" -c "CREATE DATABASE code_review_test WITH OWNER $POSTGRES_USERNAME"
+        docker pull pgvector/pgvector:pg17
+        echo "Pre-pulled pgvector image for TestContainers"
 
     - name: Perform Maven Release
       run: |
@@ -82,16 +68,16 @@ jobs:
         </settings>
         EOF
         
-        # Run release:prepare
+        # Run release:prepare (skip tests as they'll run in release:perform)
         ./mvnw release:clean release:prepare -B \
         -DscmCommentPrefix="[maven-release-plugin] " \
         -DtagNameFormat="v@{project.version}" \
         -Darguments="-Dmaven.test.skip=true -s custom-settings.xml" \
         -s custom-settings.xml
         
-        # Run release:perform with explicit settings
+        # Run release:perform with tests enabled (TestContainers will handle DB)
         ./mvnw release:perform -B \
-        -Darguments="-Dmaven.test.skip=true -s custom-settings.xml" \
+        -Darguments="-s custom-settings.xml" \
         -s custom-settings.xml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -123,7 +109,3 @@ jobs:
         generate_release_notes: true
         files: ${{ env.ARTIFACT_PATHS }}
         token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Stop Docker containers
-      if: always()
-      run: docker compose -f compose.yaml down
